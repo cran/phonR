@@ -1,8 +1,8 @@
-4fb0a116e3aec9dbdb42c2fc467c84cf *DESCRIPTION
+a818e935b1e603d431906c5cafbd553f *DESCRIPTION
 21f931872a178c8f260a56493cc810bd *NAMESPACE
-df435213aea9dd5849c235bcc7ee8ad7 *R/phonR.r
+56faf0081ccec3873e8e394bf195c193 *R/phonR.r
 3aef6c97bd55a74486bf857653e832c8 *data/indoVowelData.rda
 7db620de7d662a99361f2c06e541ec26 *inst/CITATION
 0de39e437d6c501c7540522613a31f79 *man/indo.Rd
 21081b416ff2788c02369234e9a9d0ed *man/normalizeVowels.Rd
-08a1c684981853b0fbe59eb8d21f56db *man/plotVowels.Rd
+28ba37da2688fedad0cb0fe2dd0cefbb *man/plotVowels.Rd
