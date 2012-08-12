@@ -1,0 +1,8 @@
+416a276041b788af4503ee0f51eaa217 *DESCRIPTION
+100a4c2ebf9f7fbc8c3cba798613afd2 *NAMESPACE
+f76f3c2e2d99d7f653e4a68fd3e2d603 *R/phonR.r
+3aef6c97bd55a74486bf857653e832c8 *data/indoVowelData.rda
+7db620de7d662a99361f2c06e541ec26 *inst/CITATION
+0de39e437d6c501c7540522613a31f79 *man/indo.Rd
+ac89ca639a9ce1b46f7c5d6dafab571a *man/normalizeVowels.Rd
+6a42012f8a8f18d8003ab54d1a4edf47 *man/plotVowels.Rd
