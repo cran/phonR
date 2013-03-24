@@ -1,8 +1,10 @@
-a818e935b1e603d431906c5cafbd553f *DESCRIPTION
-21f931872a178c8f260a56493cc810bd *NAMESPACE
-56faf0081ccec3873e8e394bf195c193 *R/phonR.r
+3038c50568005d3dfb384c262c06b5f3 *DESCRIPTION
+9fdfeb11f7ddba6f3aab9aaa6b1ac5dd *NAMESPACE
+5af58056044f75475f0e3f863457e04b *R/ellipse.R
+7a20edaeba6bcb4f95b786cf2b711765 *R/phonR.r
 3aef6c97bd55a74486bf857653e832c8 *data/indoVowelData.rda
 7db620de7d662a99361f2c06e541ec26 *inst/CITATION
+4de9226c5862d5f944f39cde89ee7794 *man/ellipse.Rd
 0de39e437d6c501c7540522613a31f79 *man/indo.Rd
 21081b416ff2788c02369234e9a9d0ed *man/normalizeVowels.Rd
-28ba37da2688fedad0cb0fe2dd0cefbb *man/plotVowels.Rd
+1014b0b0403c3a7978d80f81634f4c01 *man/plotVowels.Rd
