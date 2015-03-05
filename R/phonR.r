@@ -1,828 +1,1268 @@
-# # # # # # # # # # # # # # # # # # # # # # # # # # # #
-# phonR version 0.4-2
-# Functions for phoneticians and phonologists using R
-# Daniel McCloy, drmccloy@uw.edu
-# LICENSED UNDER THE GNU GENERAL PUBLIC LICENSE v3.0: http://www.gnu.org/licenses/gpl.html
-# DEVELOPMENT OF THIS PACKAGE WAS FUNDED IN PART BY THE NATIONAL INSTITUTES OF HEALTH, GRANT NUMBER R01DC006014 TO PAMELA SOUZA
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+# phonR version 1.0-0
+# Functions for phoneticians and phonologists
+# AUTHOR: Daniel McCloy, drmccloy@uw.edu
+# LICENSED UNDER THE GNU GENERAL PUBLIC LICENSE v3.0:
+# http://www.gnu.org/licenses/gpl.html
+# DEVELOPMENT OF THIS PACKAGE WAS FUNDED IN PART BY NIH-R01DC006014
 #
 # CHANGELOG:
-# v0.4: bugfixes: poly.order now works with arbitrary labels; bug in s-centroid calculation fixed.  Enhancements: added user-override arguments for color, shape and linestyle; added support for diphthong plotting, argument poly.include eliminated (inferred from elements present in poly.order), new argument points.label allows override of points label when points='text'.
-# v0.3 bugfixes: font specification on windows now works for direct-to-file output. Enhancements: graphics handling overhauled to use base graphics instead of Cairo(). Several new output formats added. Raster resolution and font size now specifiable. Improved error handling.
-# v0.2 bugfixes: points.alpha and means.alpha now work for grayscale plots. Plots with polygons or ellipses but no shapes now get proper legend type (lines, not boxes). Graphical parameters now captured and restored when plotting to onscreen device. Vowels with no variance (e.g., single tokens) no longer crash ellipse function. Vowels not in default poly.order() no longer go unplotted when points='text'. Enhancements: support for custom axis titles (to accommodate pre-normalized values), point and mean sizes, and fonts. Custom line types added (11 total now).
-# # # # # # # # # # # # # # # # # # # # # # # # # # # #
+# v1.0: major refactor of the entire codebase. Enhancements: more control
+# over color and style. Support for most standard plot/par arguments (xlim,
+# ylim, cex.axis, etc). New drawing functions for repulsive force heatmaps
+# and convex hulls. Hulls, polygons, and ellipses can have color fills.
+# Shortcut argument "pretty=TRUE" soothes the senses. Diphthongs with
+# arrowheads.
+#
+# v0.4: bugfixes: poly.order now works with arbitrary labels; bug in
+# s-centroid calculation fixed.  Enhancements: added user-override
+# arguments for color, shape and linestyle; added support for diphthong
+# plotting, argument poly.include eliminated (inferred from elements
+# present in poly.order), new argument points.label allows override of
+# points label when points='text'.
+#
+# v0.3 bugfixes: font specification on windows now works for direct-to-
+# file output. Enhancements: graphics handling overhauled to use base
+# graphics instead of Cairo(). Several new output formats added. Raster
+# resolution and font size now specifiable. Improved error handling.
+#
+# v0.2 bugfixes: points.alpha and means.alpha now work for grayscale
+# plots. Plots with polygons or ellipses but no shapes now get proper
+# legend type (lines, not boxes). Graphical parameters now captured and
+# restored when plotting to onscreen device. Vowels with no variance
+# (e.g., single tokens) no longer crash ellipse function. Vowels not in
+# default poly.order() no longer go unplotted when points='text'.
+# Enhancements: support for custom axis titles (to accommodate pre-
+# normalized values), point and mean sizes, and fonts. Custom line types
+# added (11 total now).
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
-# USAGE: source("phonR.r")
-# --or-- R CMD install phonR_X.X-X.tar.gz (from command line, replace Xs with version number)
-# Then library(phonR)
-# Then call functions as needed
+#' @export
+plotVowels <- function(f1, f2, vowel=NULL, group=NULL,
+    plot.tokens=TRUE, pch.tokens=NULL, cex.tokens=NULL, alpha.tokens=NULL,
+    plot.means=FALSE, pch.means=NULL, cex.means=NULL, alpha.means=NULL,
+    hull.line=FALSE, hull.fill=FALSE, hull.args=NULL,
+    poly.line=FALSE, poly.fill=FALSE, poly.args=NULL, poly.order=NA,
+    ellipse.line=FALSE, ellipse.fill=FALSE, ellipse.conf=0.6827, ellipse.args=NULL,
+    diph.arrows=FALSE, diph.args.tokens=NULL, diph.args.means=NULL,
+    diph.label.first.only=TRUE, diph.mean.timept=1, diph.smooth=FALSE,
+    heatmap=FALSE, heatmap.args=NULL, heatmap.legend=FALSE, heatmap.legend.args=NULL,
+    var.col.by=NULL, var.style.by=NULL, fill.opacity=0.3, label.las=NULL,
+    legend.kwd=NULL, legend.args=NULL, pretty=FALSE, output='screen', ...)
+{
+    # # # # # # # # # # #
+    # HANDLE EXTRA ARGS #
+    # # # # # # # # # # #
+    exargs <- list(...)
+    font.specified <- 'family' %in% names(exargs)
+    # two arguments get overridden no matter what
+    exargs$ann <- FALSE
+    exargs$type <- 'n'
+    # Some graphical devices only support inches, so we convert here.
+    if ("units" %in% names(exargs)) {
+        if (!exargs$units %in% c("in", "cm", "mm", "px")) {
+            warning("Unsupported argument value '", units, "': 'units' must be ",
+                    "one of 'in', 'cm', 'mm', or 'px'. Using default ('in').")
+            exargs$units <- "in"
+        }
+        if (output %in% c("pdf", "svg", "screen")) {
+            if ("width" %in% names(exargs)) {
+                if      (exargs$units == "cm") exargs$width <- exargs$width/2.54
+                else if (exargs$units == "mm") exargs$width <- exargs$width/2540
+                else if (exargs$units == "px") exargs$width <- exargs$width/72
+            }
+            if ("height" %in% names(exargs)) {
+                if      (exargs$units == "cm") exargs$height <- exargs$height/2.54
+                else if (exargs$units == "mm") exargs$height <- exargs$height/2540
+                else if (exargs$units == "px") exargs$height <- exargs$height/72
+            }
+        }
+    }
+    # Some args are only settable by direct par() call (not via plot(), etc).
+    # Not strictly true for "family" or "las", but works better this way.
+    par.only <- c("ask", "fig", "fin", "las", "lheight", "mai", "mar",
+                "mex", "mfcol", "mfrow", "mfg", "new", "oma", "omd", "omi",
+                "pin", "plt", "ps", "pty", "usr", "xlog", "ylog", "ylbias")
+    if (output == "screen") {
+        par.only <- append(par.only, "family")
+    } else {
+        file.only <- c("filename", "width", "height", "units", "pointsize",
+                    "res", "quality", "compression", "family")
+        file.args <- exargs[names(exargs) %in% file.only]
+        exargs <- exargs[!(names(exargs) %in% file.only)]
+    }
+    par.args <- exargs[names(exargs) %in% par.only]
+    # allow separate "las" for axis numbers & axis labels
+    if (is.null(label.las)) {
+        if ("las" %in% names(par.args)) label.las <- par.args$las
+        else                            label.las <- par("las")
+    }
+    # split out arguments for annotations. If "pretty", axes get drawn separately
+    # from plot(); other annotation gets drawn in separate mtext() calls whether
+    # "pretty" or not.
+    if (pretty) {
+        axis.only <- c("cex.axis", "col.axis", "font.axis")
+        axis.args <- exargs[names(exargs) %in% axis.only]
+    } else {
+        axis.only <- c()
+    }
+    main.only <- c("cex.main", "col.main", "font.main")
+    sub.only <- c("cex.sub",  "col.sub",  "font.sub")
+    lab.only <- c("cex.lab",  "col.lab",  "font.lab")
+    main.args <- exargs[names(exargs) %in% main.only]
+    sub.args <- exargs[names(exargs) %in% sub.only]
+    lab.args <- exargs[names(exargs) %in% lab.only]
+    names(main.args) <- gsub(".main", "", names(main.args))
+    names(sub.args) <- gsub(".sub", "", names(sub.args))
+    names(lab.args) <- gsub(".lab", "", names(lab.args))
+    if ("xlab" %in% names(exargs)) xlab <- exargs$xlab
+    else                           xlab <- "F2"
+    if ("ylab" %in% names(exargs)) ylab <- exargs$ylab
+    else                           ylab <- "F1"
+    if ("main" %in% names(exargs)) main <- exargs$main
+    #else if (pretty)              main <- "Vowels"
+    else                           main <- ""
+    if ("sub" %in% names(exargs))   sub <- exargs$sub
+    #else if (pretty)               sub <- "plotted with love using phonR"
+    else                            sub <- ""
+    exargs$xlab <- NULL
+    exargs$ylab <- NULL
+    exargs$main <- NULL
+    exargs$sub <- NULL
+    # add "las" into label args
+    lab.args <- as.list(c(lab.args, las=label.las))
+    # don't pass args twice!
+    args.to.remove <- c(par.only, main.only, axis.only, lab.only, sub.only)
+    exargs <- exargs[!names(exargs) %in% args.to.remove]
 
-# NORMALIZATION FUNCTION
-normalizeVowels <- function(method, f0=NULL, f1=NULL, f2=NULL, f3=NULL, vowel=NULL, grouping.factor=NULL) {
-  m <- tolower(method)
-  f <- cbind(f0=as.vector(f0),f1=as.vector(f1),f2=as.vector(f2),f3=as.vector(f3))
-  if (is.null(f)) {
-    warning('Missing values: at least one of the arguments (f0, f1, f2, or f3) must be supplied.')
-  }
-  if (!(m %in% c('bark','mel','log','erb','z','zscore','z-score','ztransform','z-transform','lobanov','logmean','nearey1','nearey2','scentroid','s-centroid','s','wattfabricius','watt-fabricius'))) {
-    warning('Method must be one of: bark, mel, log, erb, z|zscore|z-score|ztransform|z-transform|lobanov, logmean|nearey1, nearey2, s|scentroid|s-centroid|wattfabricius|watt-fabricius.')
-  }
-  if (!is.null(grouping.factor) & !(m %in% c('z','zscore','ztransform','lobanov','logmean','nearey1','nearey2','s','scentroid','wattfabricius'))) {
-    warning('Normalization method \'',method,'\' is a vowel-intrinsic formula. Argument \'grouping.factor\' is ignored.')
-  }
-  if (!is.null(vowel) & !(m %in% c('s','scentroid','wattfabricius'))) {
-    warning('Normalization method \'',method,'\' is a vowel-intrinsic formula. Argument \'vowel\' is ignored.')
-  }
-  if ((!is.null(f3) | !is.null(f0)) & !(m %in% c('s','scentroid','wattfabricius'))) {
-    warning('f0 and F3 values ignored for s-centroid normalization method. Only F1 and F2 values returned.')
-    f <- cbind(as.vector(f1),as.vector(f2))
-  }
-  if (is.null(grouping.factor)) { grouping.factor <- 'noGroups' }
-  if (m=='bark') {
-    fn <- 26.81*f/(1960+f)-0.53
-  } else if (m=='log') {
-    fn <- log10(f)
-  } else if (m=='mel') {
-    fn <- 2595*log10(1+f/700)
-  } else if (m=='erb') {
-    fn <- 21.4*log10(0.00437*f+1)
-  } else if (m %in% c('s','scentroid','wattfabricius','s-centroid','watt-fabricius')) {
-    subsets <- by(f, list(vowel,grouping.factor), identity) # 2D list (group x vowel) of lists (f1,f2)
-    means.list <- matrix(lapply(subsets, colMeans), ncol=ncol(subsets), dimnames=dimnames(subsets))
-    minima <- apply(means.list, 2, function(i) apply(do.call(rbind,i), 2, min)) # TODO: bug here when using diphthongs
-    maxima <- apply(means.list, 2, function(i) apply(do.call(rbind,i), 2, max))
-    min.id <- apply(means.list, 2, function(i) apply(do.call(rbind,i), 2, which.min))
-    max.id <- apply(means.list, 2, function(i) apply(do.call(rbind,i), 2, which.max))
-    if (length(unique(min.id['f1',]))>1) {
-      warning('The vowel with the lowest mean F1 value (usually /i/) does not match across all speakers/groups. You\'ll have to calculate s-centroid by hand.')
-      data.frame(minF1=round(minima['f1',]), vowel=dimnames(means.list)[[1]][min.id['f1',]])
-      stop()
+    # # # # # # # # # #
+    # OUTPUT PARSING  #
+    # # # # # # # # # #
+    output <- tolower(output)
+    if (output=="jpeg") output <- "jpg"
+    if (output=="tiff") output <- "tif"
+    output.types <- c("pdf", "svg", "jpg", "tif", "png", "bmp", "screen")
+    output.raster <- c("jpg", "tif", "png", "bmp", "screen")
+    if (!(output %in% output.types)) {
+        warning("Unknown argument value '", output, "': 'output' ",
+                "must be one of 'pdf', 'svg', 'png', 'tif', 'bmp', ",
+                "'jpg', or 'screen'. Using default ('screen').")
+        output <- "screen"
     }
-    if (length(unique(max.id['f1',]))>1) {
-      warning('The vowel with the highest mean F1 value (usually /a/) does not match across all speakers/groups. You\'ll have to calculate s-centroid by hand.')
-      data.frame(maxF1=round(maxima['f1',]), vowel=dimnames(means.list)[[1]][max.id['f1',]])
-      stop()
+
+    # # # # # # # # # # #
+    # LEGEND KWD CHECK  #
+    # # # # # # # # # # #
+    legend.kwds <- c("left", "right", "top", "bottom", "center", "topleft",
+                    "topright", "bottomleft", "bottomright")
+    if (!is.null(legend.kwd)) {
+        if (!legend.kwd %in% legend.kwds) {
+            stop(paste(c("legend.kwd must be one of '",
+                         paste(legend.kwds, collapse="', '"), "'."),
+                 collapse=""))
+    }   }
+
+    # # # # # # # # # # # # # # # # # #
+    # PRELIMINARY DIPHTHONG HANDLING  #
+    # # # # # # # # # # # # # # # # # #
+    if (is.vector(f1) && is.vector(f2)) {
+        diphthong <- FALSE
+    } else if (length(dim(f1)) == 1 && length(dim(f2)) == 1) {
+        f1 <- as.vector(f1)
+        f2 <- as.vector(f2)
+        diphthong <- FALSE
+    } else {
+        if (!all(dim(f1) == dim(f2))) {
+            stop("Unequal dimensions for 'f1' and 'f2'.")
+        } else if (length(dim(f1)) > 2) {
+            stop("Argument 'f1' has more than two dimensions.")
+        } else if (length(dim(f2)) > 2) {
+            stop("Argument 'f2' has more than two dimensions.")
+        } else if (!is.null(vowel) && length(vowel) != dim(f1)[1]) {
+            stop("First axis of 'f1' does not equal length of 'vowel'.")
+        }
+        diphthong <- TRUE
     }
-    lowvowf2 <- do.call(rbind, means.list[unique(max.id['f1',]),])[,'f2']
-    centroids <- rbind(f1=(2*minima['f1',]+maxima['f1',])/3, f2=(minima['f2',]+maxima['f2',]+lowvowf2)/3)
-    rnames <- rep(rownames(subsets),times=ncol(subsets))
-    cnames <- rep(colnames(subsets),each=nrow(subsets))
-    fn <- f/t(centroids[,grouping.factor])
-  } else if (grouping.factor[1]=='noGroups') {
-    if (m %in% c('lobanov','ztransform','z-transform','zscore','z-score','z')) {
-      fn <- scale(f)
-    } else if (m %in% c('nearey1','logmean')) {
-      fn <- log(f) - rep(apply(log(f),2,mean),each=nrow(f))
-    } else if (m=='nearey2') {
-      if (ncol(f) == 4) {
-        fn <- log(f) - sum(apply(log(f),2,mean))
-      } else {
-        warning('Missing values: normalization method \'nearey2\' requires non-null values for all arguments (f0, f1, f2, and f3).')
-        stop()
-      }
+    if (!diphthong) {
+        if (length(f2) != length(f1)) stop('Unequal dimensions for "f1" and "f2".')
+        else if (!is.null(vowel) && length(vowel) != length(f1)) {
+            stop("Unequal dimensions for 'f1' and 'vowel'.")
+        }
+        l <- length(f1)
+    } else {
+        f1d <- f1
+        f2d <- f2
+        f1 <- f1d[,diph.mean.timept]
+        f2 <- f2d[,diph.mean.timept]
+        l <- nrow(f1d)
     }
-  } else {
-    subsets <- lapply(by(f, grouping.factor, identity),as.matrix) # list of matrices
-    if (m %in% c('lobanov','ztransform','z-transform','zscore','z-score','z')) {
-      means.list <- lapply(subsets, colMeans)
-      stdev.list <- lapply(subsets, function(x){apply(x,2,sd)})
-      means.matrix <- t(apply(as.matrix(grouping.factor),1,function(x){means.list[[x]]}))
-      stdev.matrix <- t(apply(as.matrix(grouping.factor),1,function(x){stdev.list[[x]]}))
-      fn <- (f - means.matrix) / stdev.matrix
-    } else if (m %in% c('nearey1','logmean')) {
-      logmeans.list <- lapply(subsets, function(x){apply(log(x),2,mean)})
-      logmeans.matrix <- t(apply(as.matrix(grouping.factor),1,function(x){logmeans.list[[x]]}))
-      fn <- log(f) - logmeans.matrix
-    } else if (m=='nearey2') {
-      logmeans.list <- lapply(subsets, function(x){apply(log(x),2,mean)})
-      logmeans.matrix <- t(apply(as.matrix(grouping.factor),1,function(x){logmeans.list[[x]]}))
-      if (ncol(f) == 4) {
-        fn <- log(f) - matrix(rep(apply(logmeans.matrix,1,sum),4),ncol=4)
-      } else {
-        warning('Missing values: normalization method \'nearey2\' requires non-null values for all arguments (f0, f1, f2, and f3).')
-        stop()
-      }
+
+    # # # # # # # # # # # # # #
+    # DIPHTHONG ARG HANDLING  #
+    # # # # # # # # # # # # # #
+    if (diphthong) {
+        arrow.only <- c("angle", "length")
+        line.only <- c("type")
+        if (pretty) {
+            if (is.null(pch.means)) type <- "l"
+            else                    type <- "o"
+            pretty.diph.tokens <- list(length=0.1, angle=20, type=type)
+            pretty.diph.means  <- list(length=0.1, angle=20, type=type,
+                                       lwd=2*par("lwd"))
+            # user override
+            pretty.diph.tokens[names(diph.args.tokens)] <- diph.args.tokens
+            pretty.diph.means[names(diph.args.means)] <- diph.args.means
+            # re-unify
+            diph.args.tokens <- pretty.diph.tokens
+            diph.args.means  <- pretty.diph.means
+        }
+        if (diph.arrows) {
+            diph.arrow.tokens <- diph.args.tokens[!names(diph.args.tokens) %in% line.only]
+            diph.arrow.means  <- diph.args.means[!names(diph.args.means) %in% line.only]
+        }
+        diph.args.tokens[names(diph.args.tokens) %in% arrow.only] <- NULL
+        diph.args.means[names(diph.args.means) %in% arrow.only] <- NULL
     }
-  }
-  return(fn)
+
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+    # PRELIMINARY HANDLING OF GROUPING FACTOR, COLOR, AND STYLE #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+    if (is.null(vowel)) v <- rep(NA, l)
+    else                v <- factor(vowel)
+    if (is.null(group)) gf <- rep('gf', l)
+    else 			    gf <- factor(group)
+    # used later to set default polygon color when color varies by vowel
+    if (identical(as.numeric(factor(var.col.by)), 
+    			  as.numeric(factor(vowel)))) col.by.vowel <- TRUE
+    else                                      col.by.vowel <- FALSE
+    # var.col.by & var.style.by
+    if (!is.null(var.col.by[1])) {
+        if (is.na(var.col.by[1])) legend.col.lab <- NULL
+        else                      legend.col.lab <- unique(as.character(var.col.by))
+        var.col.by <- as.numeric(factor(var.col.by))
+    } else {
+        legend.col.lab <- c()
+        var.col.by <- rep(1, l)  # default to black
+    }
+    if (!is.null(var.style.by[1])) {
+        if (is.na(var.style.by[1])) legend.style.lab <- NULL
+        else                        legend.style.lab <- unique(as.character(var.style.by))
+        var.style.by <- as.numeric(factor(var.style.by))
+    } else {
+        legend.style.lab <- c()
+        var.style.by <- rep(1, l)  # default to solid
+    }
+    num.col <- length(unique(var.col.by))
+    num.sty <- length(unique(var.style.by))
+    # misc. plotting defaults
+    if (is.null(cex.tokens))    cex.tokens <- par('cex')
+    if (is.null(cex.means))      cex.means <- par('cex')
+
+    # # # # # # # # # # # # #
+    # DEFAULTS FOR "PRETTY" #
+    # # # # # # # # # # # # #
+    if (pretty) {
+        # still suppress axes if axes=FALSE
+        draw.axes <- TRUE
+        if ("axes" %in% names(exargs)) {
+            if (!exargs$axes) draw.axes <- FALSE
+        }
+        # if no colors specified, use equally spaced HCL values
+        # [-1] avoids duplicate hues 0 and 360
+        if (num.col == 1) pretty.col <- "black"
+        else {
+            hue <- seq(0,  360, length.out=1+num.col)[-1]
+            chr <- seq(60, 100, length.out=num.col)
+            lum <- seq(60,  40, length.out=num.col)
+            pretty.col <- hcl(hue, chr, lum, alpha=1)
+        }
+        # PCH: filled / open {circ,tri,squ,diam}, plus, x, inverted open tri
+        pretty.pch <- rep(c(16,1,17,2,15,0,18,5,3,4,6), length.out=num.sty)
+        # LTY: custom linetypes more readily distinguishable
+        pretty.lty <- c('solid', '44', 'F4', '4313', 'F3131313', '23F3',
+                        '232923', '23258385', '282823B3', '13', '82')
+        pretty.args <- list(mgp=c(2,0.5,0), xaxs='i', yaxs='i', axes=FALSE,
+                            fg=hcl(0,0,40), tcl=-0.25, xpd=NA,
+                            pch=pretty.pch, lty=pretty.lty, col=pretty.col)
+        pretty.par.args <- list(mar=c(1,1,5,5), las=1)
+        # legend args
+        pretty.legend.args <- list(bty="n", seg.len=1)
+        # LET USER-SPECIFIED ARGS OVERRIDE "PRETTY" DEFAULTS
+        pretty.args[names(exargs)] <- exargs
+        pretty.par.args[names(par.args)] <- par.args
+        pretty.legend.args[names(legend.args)] <- legend.args
+        # RE-UNIFY TO AVOID LATER LOGIC BRANCHING
+        exargs <- pretty.args
+        par.args <- pretty.par.args
+        legend.args <- pretty.legend.args
+    }
+
+    # # # # # # # # # #
+    # OTHER DEFAULTS  #
+    # # # # # # # # # #
+    vary.col <- ifelse(is.na(var.col.by[1]), FALSE, TRUE)
+    vary.sty <- ifelse(is.na(var.style.by[1]), FALSE, TRUE)
+    # colors: use default pallete if none specified and pretty=FALSE
+    if (!'col' %in% names(exargs)) exargs$col <- palette()
+    if (vary.col) exargs$col <- exargs$col[var.col.by]
+    # linetypes & plotting characters
+    if (!'lty' %in% names(exargs)) exargs$lty <- seq_len(num.sty)
+    if (!'pch' %in% names(exargs)) exargs$pch <- seq_len(num.sty)
+    if (vary.sty) {
+        exargs$lty <- exargs$lty[var.style.by]
+        exargs$pch <- exargs$pch[var.style.by]
+    }
+    if (is.null(pch.tokens)) pcht <- exargs$pch
+    else                     pcht <- pch.tokens
+    if (is.null(pch.means))  pchm <- exargs$pch
+    else                     pchm <- pch.means
+    # transparency
+    trans.col <- makeTransparent(exargs$col, fill.opacity)
+    trans.fg <- makeTransparent(par('fg'), fill.opacity)
+    # ellipse colors
+    if (ellipse.line) {
+        if ("border" %in% names(ellipse.args)) {
+            ellipse.args$border <- rep(ellipse.args$border, length.out=num.col)
+            if (vary.col) ellipse.line.col <- ellipse.args$border[var.col.by]
+            else          ellipse.line.col <- ellipse.args$border
+        } else            ellipse.line.col <- exargs$col
+    } else                ellipse.line.col <- NA[var.col.by]
+    if (ellipse.fill) {
+        if ("col" %in% names(ellipse.args)) {
+            if (vary.col) ellipse.fill.col <- ellipse.args$col[var.col.by]
+            else          ellipse.fill.col <- ellipse.args$col
+        } else            ellipse.fill.col <- trans.col
+    } else                ellipse.fill.col <- NA[var.col.by]
+    # hull colors
+    if (hull.line) {
+        if ("border" %in% names(hull.args)) {
+            if (vary.col)        hull.line.col <- hull.args$border[var.col.by]
+            else                 hull.line.col <- hull.args$border
+        } else if (col.by.vowel) hull.line.col <- par("fg")
+        else                     hull.line.col <- exargs$col
+    } else                       hull.line.col <- NA[var.col.by]
+    if (hull.fill) {
+        if ("col" %in% names(hull.args)) {
+            if (vary.col)        hull.fill.col <- hull.args$col[var.col.by]
+            else                 hull.fill.col <- hull.args$col
+        } else if (col.by.vowel) hull.fill.col <- trans.fg
+        else                     hull.fill.col <- trans.col
+    } else                       hull.fill.col <- NA[var.col.by]
+    # polygon colors
+    if (poly.line) {
+        if ("border" %in% names(poly.args)) {
+            if (vary.col)        poly.line.col <- poly.args$border[var.col.by]
+            else                 poly.line.col <- poly.args$border
+        } else if (col.by.vowel) poly.line.col <- par("fg")
+        else                     poly.line.col <- exargs$col
+    } else                       poly.line.col <- NA[var.col.by]
+    if (poly.fill) {
+        if ("col" %in% names(poly.args)) {
+            if (vary.col)        poly.fill.col <- poly.args$col[var.col.by]
+            else                 poly.fill.col <- poly.args$col
+        } else if (col.by.vowel) poly.fill.col <- trans.fg
+        else                     poly.fill.col <- trans.col
+    } else                       poly.fill.col <- NA[var.col.by]
+
+    # # # # # # # # # # # # # # #
+    # TOKEN / MEAN TRANSPARENCY #
+    # # # # # # # # # # # # # # #
+    if (!is.null(alpha.tokens)) col.tokens <- makeTransparent(exargs$col, alpha.tokens)
+    else                        col.tokens <- exargs$col
+    if (!is.null(alpha.means))   col.means <- makeTransparent(exargs$col, alpha.means)
+    else                         col.means <- exargs$col
+
+    # # # # # # # # # # # # # # #
+    # INITIALIZE OUTPUT DEVICES #
+    # # # # # # # # # # # # # # #
+    if      (output=='pdf') do.call(cairo_pdf, file.args)
+    else if (output=='svg') do.call(svg, file.args)
+    else if (output=='jpg') do.call(jpeg, file.args)
+    else if (output=='tif') do.call(tiff, file.args)
+    else if (output=='png') do.call(png, file.args)
+    else if (output=='bmp') do.call(bmp, file.args)
+    # FONT HANDLING FOR WINDOWS
+    is.win <- .Platform$OS.type == 'windows'
+    if (is.win && font.specified && output %in% output.raster) {
+        windowsFonts(phonr=windowsFont(par.args$family))
+        par.args$family <- 'phonr'
+        #if (output=='screen') warning("Font specification may fail if saving ",
+        #                            "as PDF from onscreen plot window menu. ",
+        #                            "To ensure PDF font fidelity, run ",
+        #                            "plotVowels() with output='pdf'.")
+    }
+    # INITIAL CALL TO PAR()
+    op <- par(par.args)
+
+    # # # # # # # # # # # # # #
+    # COLLECT INTO DATAFRAMES #
+    # # # # # # # # # # # # # #
+    d <- data.frame(f1=f1, f2=f2, v=v, gf=factor(gf),
+                    col.tokens=col.tokens, col.means=col.means,
+                    style=var.style.by,
+                    ellipse.fill.col=ellipse.fill.col,
+                    ellipse.line.col=ellipse.line.col,
+                    poly.fill.col=poly.fill.col,
+                    poly.line.col=poly.line.col,
+                    hull.fill.col=hull.fill.col,
+                    hull.line.col=hull.line.col,
+                    pchmeans=pchm, pchtokens=pcht,
+                    stringsAsFactors=FALSE)
+    if (diphthong) {
+        d$f2d <- lapply(apply(f2d, 1, list), unlist, recursive=TRUE, use.names=FALSE)
+        d$f1d <- lapply(apply(f1d, 1, list), unlist, recursive=TRUE, use.names=FALSE)
+    }
+    if (is.null(vowel) && is.null(group))  byd <- list(d=d)
+    else                                   byd <- by(d, d[c('v','gf')], identity)
+    # DATAFRAME OF MEANS
+    m <- lapply(byd, function(i) {
+        if (!is.null(i)) {
+            with(i, data.frame(f2=mean(f2, na.rm=TRUE),
+                               f1=mean(f1, na.rm=TRUE),
+                               v=unique(v), gf=unique(gf),
+                               col.means=ifelse(length(unique(col.means)) == 1,
+                               					unique(col.means), par("fg")),
+                               style=ifelse(length(unique(style)) == 1,
+                               				unique(style), 1),
+                               poly.fill.col=unique(poly.fill.col),
+                               poly.line.col=unique(poly.line.col),
+                               ellipse.fill.col=unique(ellipse.fill.col),
+                               ellipse.line.col=unique(ellipse.line.col),
+                               pchmeans=unique(pchmeans),
+                               stringsAsFactors=FALSE))
+    }})
+    m <- do.call(rbind, m)
+    m$gfn <- as.numeric(factor(m$gf))
+    if (diphthong) {
+        m$f2d <- do.call(rbind, lapply(byd, function(i) if (!is.null(i))
+                         with(i, list(colMeans(do.call(rbind, f2d))))))
+        m$f1d <- do.call(rbind, lapply(byd, function(i) if (!is.null(i))
+                         with(i, list(colMeans(do.call(rbind, f1d))))))
+    }
+    # MEANS & COVARIANCES FOR ELLIPSE DRAWING
+    if (ellipse.fill || ellipse.line) {
+        mu <- lapply(byd, function(i) { if (!is.null(i)) {
+            with(i, list(colMeans(cbind(f2, f1), na.rm=TRUE)))
+        }})
+        mu <- do.call(rbind, mu)
+        sigma <- lapply(byd, function(i) { if (!(is.null(i))) {
+            with(i[!(is.na(i$f2)) && !(is.na(i$f1)),],
+                 list(cov(cbind(f2, f1))))
+        }})
+        # the covariance calculation above still may yield some NA cov. matrices,
+        # due to some vowels having only 1 token. This is handled later.
+        sigma <- do.call(rbind, sigma)
+        m$mu <- mu
+        m$sigma <- sigma
+    }
+
+    # # # # # # # # # # # # #
+    # DETERMINE PLOT BOUNDS #
+    # # # # # # # # # # # # #
+    # TOKEN EXTREMA
+    if (diphthong) plot.bounds <- cbind(range(f2d, finite=TRUE),
+                                        range(f1d, finite=TRUE))
+    else           plot.bounds <- apply(d[,c('f2','f1')], 2, range, finite=TRUE)
+    # ELLIPSE EXTREMA
+    if (ellipse.fill || ellipse.line) {
+        ellipse.param <- apply(m, 1, function(i) {
+            if (any(is.na(i$sigma))) {
+                i$sigma <- matrix(rep(0, 4), nrow=2)
+                msg <- ifelse(i$gf == "gf", as.character(i$v),
+                              paste("(", i$gf, ", ", i$v, ")", sep=""))
+                message("No ellipse drawn for ", msg, " because there is only one token.")
+            }
+            list('mu'=i$mu, 'sigma'=i$sigma, 'alpha'=1 - ellipse.conf, 'draw'=FALSE)
+        })
+        ellipse.points <- lapply(ellipse.param,
+                                 function(i) do.call(ellipse, i))
+        ellipse.bounds <- lapply(ellipse.points,
+                                 function(i) apply(i, 2, range, finite=TRUE))
+        ellipse.bounds <- apply(do.call(rbind, ellipse.bounds), 2,
+                                range, finite=TRUE)
+        plot.bounds <- apply(rbind(plot.bounds, ellipse.bounds), 2,
+                             range, finite=TRUE)
+    }
+
+    # # # # # # # # # # #
+    # PREPARE GARNISHES #
+    # # # # # # # # # # #
+    # decide plot bounds
+    user.set.xlim <- "xlim" %in% names(exargs)
+    user.set.ylim <- "ylim" %in% names(exargs)
+    if (!user.set.xlim) exargs$xlim <- rev(plot.bounds[,1])
+    if (!user.set.ylim) exargs$ylim <- rev(plot.bounds[,2])
+    # calculate nice tickmark intervals
+    xticks <- prettyTicks(exargs$xlim)
+    yticks <- prettyTicks(exargs$ylim)
+    # ensure axes begin and end at a tickmark (unless xlim/ylim overtly set)
+    if (pretty && !user.set.xlim) exargs$xlim <- rev(range(xticks))
+    if (pretty && !user.set.ylim) exargs$ylim <- rev(range(yticks))
+    # annotation
+    if (pretty) {
+        x.args <- list(side=3, line=2)
+        y.args <- list(side=4, line=3)
+        t.args <- list(side=3, line=4)
+        s.args <- list(side=3, line=3)
+    } else {
+        x.args <- list(side=1, line=par("mgp")[1])
+        y.args <- list(side=2, line=par("mgp")[1])
+        t.args <- list(side=3, line=1, outer=FALSE)
+        s.args <- list(side=4, line=par("mgp")[1] + 1)
+    }
+
+    # # # # # # # # # # # # # # # #
+    # PLOT THE AXES AND GARNISHES #
+    # # # # # # # # # # # # # # # #
+    do.call(plot, c(list(NA, NA), exargs))
+    do.call(mtext, c(xlab, x.args, lab.args))
+    do.call(mtext, c(ylab, y.args, lab.args))
+    do.call(mtext, c(main, t.args, main.args))
+    do.call(mtext, c(sub, s.args, sub.args))
+    if (pretty && draw.axes) {
+        if (!is.null(xticks[1]))  x.axis.args <- c(list(side=3, at=xticks), axis.args)
+        else                      x.axis.args <- c(list(side=3), axis.args)
+        if (!is.null(yticks[1]))  y.axis.args <- c(list(side=4, at=yticks), axis.args)
+        else                      y.axis.args <- c(list(side=4), axis.args)
+        do.call(axis, x.axis.args)
+        do.call(axis, y.axis.args)
+    }
+
+    # # # # # # # # #
+    # PLOT HEATMAP  #
+    # # # # # # # # #
+    if (heatmap) {
+        if (pretty & !"colormap" %in% names(heatmap.args)) {
+            heatmap.args$colormap <- plotrix::color.scale(x=0:100, cs1=c(0, 180),
+                                                          cs2=100, cs3=c(25, 100),
+                                                          color.spec='hcl')
+        }
+        if (!"add" %in% names(heatmap.args)) heatmap.args$add <- TRUE
+        with(d, do.call(repulsiveForceHeatmap, c(list(f2, f1, type=v),
+                                                 heatmap.args)))
+    }
+    if (heatmap.legend) {
+        if (!"x" %in% names(heatmap.legend.args)) {
+            heatmap.legend.args$x <- rep(exargs$xlim[1], 2)
+            heatmap.legend.args$y <- exargs$ylim - c(0, diff(exargs$ylim) / 2)
+        }
+        if (!"colormap" %in% heatmap.legend.args) {
+            heatmap.legend.args$colormap <- heatmap.args$colormap
+        }
+        do.call(repulsiveForceHeatmapLegend, heatmap.legend.args)
+    }
+
+    # # # # # # #
+    # PLOT HULL #
+    # # # # # # #
+    if (hull.fill || hull.line) {
+        hull.columns <- c('f2', 'f1', 'hull.fill.col', 'hull.line.col', 'style')
+        hh <- by(d, d$gf, function(i) i[!is.na(i$f2) & !is.na(i$f1),])
+        if (diphthong) {
+            # if diphthong, hull should ignore diph.mean.timept
+            hulls <- lapply(hh, function(i) {
+                ipts <- with(i, data.frame(f2=do.call(c, f2d),
+                                           f1=do.call(c, f1d)))
+                hull <- ipts[chull(ipts),]
+                hull$hull.fill.col <- unique(i$hull.fill.col)
+                hull$hull.line.col <- unique(i$hull.line.col)
+                hull$style <- unique(i$style)
+                return (hull)
+            })
+        } else {
+            hulls <- lapply(hh, function(i) with(i, i[chull(f2, f1),
+                            hull.columns]))
+        }
+        lapply(hulls, function(i) {
+            hull.args$border <- i$hull.line.col
+            hull.args$col    <- i$hull.fill.col
+            if (!"lty" %in% names(hull.args))  hull.args$lty <- i$style
+            hull.args$x      <- cbind(i$f2, i$f1)
+            with(i, do.call(polygon, hull.args))
+            })
+    }
+
+    # # # # # # # # #
+    # PLOT ELLIPSES #
+    # # # # # # # # #
+    if (ellipse.fill || ellipse.line) {
+        invisible(lapply(seq_along(ellipse.points),
+                         function(i) {
+                             ellipse.args$border <- m$ellipse.line.col[i]
+                             ellipse.args$col    <- m$ellipse.fill.col[i]
+                             if (!"lty" %in% names(ellipse.args)) {
+                                 ellipse.args$lty <- m$style[i]
+                             }
+                             do.call(polygon, c(list(x=ellipse.points[[i]]), ellipse.args))
+                             }))
+    }
+
+    # # # # # # # # #
+    # PLOT POLYGONS #
+    # # # # # # # # #
+    if (!is.na(poly.order[1]) && (poly.fill || poly.line)) {
+        if (length(poly.order) != length(unique(poly.order))) {
+            message("Duplicate entries in 'poly.order' detected; they will be ",
+                    "ignored.")
+        }
+        poly.order <- unique(as.character(poly.order)) # as.character in case factor
+        v <- unique(as.character(m$v))
+        if (length(setdiff(poly.order, v)) > 0) {
+            message("There are vowels in 'poly.order' that are not in ",
+                    "'vowel'; they will be ignored.")
+            poly.order <- intersect(poly.order, v)
+        }
+        pp <- m
+        pp$v <- factor(pp$v, levels=poly.order)
+        pp <- pp[order(pp$v),]
+        pp <- split(pp, pp$gf)
+        if (poly.fill) {
+            bigenough <- sapply(pp, function(i) nrow(i) > 2)
+            lapply(pp[bigenough], function(i) {
+                pargs <- poly.args
+                pargs$x <- cbind(i$f2, i$f1)
+                pargs$col <- i$poly.fill.col
+                pargs$border <- NA
+                with(i, do.call(polygon, pargs))
+            })
+        }
+        if (poly.line) {
+            if (plot.means) type <- 'c'
+            else type <- 'l'
+            bigenough <- sapply(pp, function(i) nrow(i) > 1)
+            invisible(lapply(pp[bigenough], function(i) {
+                pargs <- poly.args
+                pargs$x <- i$f2
+                pargs$y <- i$f1
+                pargs$type <- type
+                pargs$cex <- 1.2 * cex.means
+                pargs$col <- i$poly.line.col
+                if (!"lty" %in% names(pargs)) pargs$lty <- i$style
+                with(i[i$v %in% poly.order,], do.call(points, pargs))
+                }))
+    }   }
+
+    # # # # # # # #
+    # PLOT TOKENS #
+    # # # # # # # #
+    if (plot.tokens) {
+        if (diphthong) {
+            # setup
+            timepts <- length(d$f2d[[1]])
+            if (diph.arrows) line.range <- 1:(timepts-1)
+            else             line.range <- 1:timepts
+            # no smoothing splines
+            if (!diph.smooth || timepts < 4) {
+                if (diph.smooth) warning("Cannot smooth diphthong traces with ",
+                                         "fewer than 4 timepoints. Plotting ",
+                                         "connecting segments instead.")
+                # plot first point
+                if (diph.label.first.only) {
+                    if (!is.null(pch.tokens)) {
+                        with(d, text(f2, f1, labels=pchtokens, col=col.tokens,
+                                     cex=cex.tokens))
+                    } else {
+                        with(d, points(f2, f1, pch=pchtokens, col=col.tokens,
+                                       cex=cex.tokens))
+                    }
+                    diph.args.tokens$type <- "l"
+                }
+                # plot lines
+                apply(d, 1, function(i) {
+                    # if diph.label.first.only, cex and pch will get ignored
+                    with(i, do.call(points, c(list(t(f2d)[line.range],
+                                                   t(f1d)[line.range],
+                                                   pch=pchtokens,
+                                                   cex=cex.tokens,
+                                                   col=col.tokens),
+                                              diph.args.tokens)))
+                    })
+                # plot arrowheads
+                if (diph.arrows) {
+                    apply(d, 1, function(i) {
+                        with(i, do.call(arrows, c(list(x0=t(f2d)[timepts-1],
+                                                       y0=t(f1d)[timepts-1],
+                                                       x1=t(f2d)[timepts],
+                                                       y1=t(f1d)[timepts],
+                                                       col=col.tokens),
+                                                  diph.arrow.tokens)
+                        ))
+                    })
+                }
+            # diphthong smoothing spline
+            } else if (diph.smooth) {  # timepts > 3
+                apply(d, 1, function(i) {
+                    tryCatch({
+                        steep <- with(i, abs(lm(f1d~f2d)$coefficients['f2d']) > 1)
+                        if (steep) dat <- with(i, cbind(f1d, f2d))
+                        else       dat <- with(i, cbind(f2d, f1d))
+                        pc <- prcomp(dat, center=FALSE, scale.=FALSE)
+                        ss <- smooth.spline(pc$x)
+                        ssi <- as.matrix(as.data.frame(predict(ss))) %*% solve(pc$rotation)  #* pc$scale + pc$center
+                        end <- nrow(ssi)
+                        if (diph.arrows) {
+                            curve.range <- 1:(end-1)
+                            with(as.data.frame(ssi),
+                                 do.call(arrows, c(list(x0=f2[end-1],
+                                                        y0=f1[end-1],
+                                                        x1=f2[end],
+                                                        y1=f1[end],
+                                                        col=i$col.tokens),
+                                                   diph.arrow.tokens)))
+                        } else {
+                            curve.range <- 1:end
+                        }
+                        do.call(lines, c(list(ssi[curve.range]), diph.args.tokens))
+                    },
+                    error=function(e){
+                        message("Warning: could not plot diphthong smoother. ",
+                                "Plotting connecting segments instead.")
+                        message(paste(e, ""))
+                        if (diph.arrows) {
+                            end <- nrow(i)
+                            with(i, points(f2[1:end-1], f1[1:end-1], col=col.tokens,
+                                           pch=pchtokens, cex=cex.tokens, type="o"))
+                            with(i, do.call(arrows, c(list(x0=f2[end-1], y0=f1[end-1],
+                                                           x1=f2[end], y1=f1[end],
+                                                           col=col.tokens), diph.arrow.args)))
+                        } else {
+                            with(i, points(f2, f1, col=col.tokens, pch=pchtokens, cex=cex.tokens, type="o"))
+                        }
+                    },
+                    warning=function(w) message(w),
+                    finally={}
+                    )
+                })
+            }
+        } else {  # !diphthong
+            if (is.null(pch.tokens)) {
+                with(d, points(f2, f1, pch=pchtokens, cex=cex.tokens, col=col.tokens))
+            } else {
+                with(d, text(f2, f1, labels=pchtokens, cex=cex.tokens, col=col.tokens))
+    }   }   }
+
+    # # # # # # # #
+    # PLOT MEANS  #
+    # # # # # # # #
+    if (plot.means) {
+        if (diphthong) {
+            # TODO: implement smoothing splines for means
+            # setup
+            timepts <- length(m$f2d[[1]])
+            if (diph.arrows) line.range <- 1:(timepts-1)
+            else             line.range <- 1:timepts
+
+            # plot first point
+            if (diph.label.first.only) {
+                if (!is.null(pch.means)) {
+                    with(m, text(f2, f1, labels=pchmeans, col=col.means,
+                                 cex=cex.means))
+                } else {
+                    with(m, points(f2, f1, pch=pchmeans, col=col.means,
+                                   cex=cex.means))
+                }
+                diph.args.means$type <- "l"
+            }
+            # plot lines
+            apply(m, 1, function(i) {
+                # if diph.label.first.only, cex and pch will get ignored
+                with(i, do.call(points, c(list(t(f2d)[line.range],
+                                               t(f1d)[line.range],
+                                               pch=pchmeans,
+                                               cex=cex.means,
+                                               col=col.means),
+                                          diph.args.means)))
+            })
+            # plot arrowheads
+            if (diph.arrows) {
+                apply(m, 1, function(i) {
+                    with(i, do.call(arrows, c(list(x0=t(f2d)[timepts-1],
+                                                   y0=t(f1d)[timepts-1],
+                                                   x1=t(f2d)[timepts],
+                                                   y1=t(f1d)[timepts],
+                                                   col=col.means),
+                                              diph.arrow.means)
+                    ))
+                })
+            }
+        } else {
+            if (is.null(pch.means)) {
+                with(m, points(f2, f1, col=col.means, pch=pchmeans, cex=cex.means))
+            } else {
+                with(m, text(f2, f1, labels=pchmeans, col=col.means, cex=cex.means))
+            }
+        }
+    }
+
+    # # # # # #
+    # LEGEND  #
+    # # # # # #
+    if (!is.null(legend.kwd)) {
+        if (is.null(legend.col.lab) & is.null(legend.style.lab)) {
+            warning("Legend will not be drawn because var.col.by and var.style.by ",
+                    "are both NULL or NA. You will have to use the legend() function.")
+        } else {
+            legend.merge <- TRUE
+            # legend pch
+            legend.pch <- NULL
+            if (length(legend.style.lab)) {
+                if (plot.means && all(grepl("[[:digit:]]", pch.means))) {
+                    legend.pch <- unique(m$pchmeans)
+                } else if (plot.tokens && all(grepl("[[:digit:]]", pch.tokens))) {
+                    legend.pch <- unique(d$pchtokens)
+            }   }
+            # legend col
+            legend.col <- NULL
+            if (length(legend.col.lab)) {
+                if (plot.means)       legend.col <- unique(m$col.means)
+                else if (plot.tokens) legend.col <- unique(d$col.tokens)
+            }
+            # legend background fill
+            legend.bgf <- NULL
+            if (hull.fill || poly.fill || ellipse.fill) {
+                if (!is.na(m$ellipse.fill.col[1]))   legend.bgf <- unique(m$ellipse.fill.col)
+                else if (!is.na(m$poly.fill.col[1])) legend.bgf <- unique(m$poly.fill.col)
+                else                                 legend.bgf <- unique(hull.fill.col)
+            }
+            # legend linteype & border color
+            legend.lty <- NULL
+            legend.brd <- NULL
+            if (hull.line | poly.line | ellipse.line) {
+                legend.lty <- unique(m$style)
+                if (!is.na(m$ellipse.line.col[1]))   legend.brd <- unique(m$ellipse.line.col)
+                else if (!is.na(m$poly.line.col[1])) legend.brd <- unique(m$poly.line.col)
+                else                                 legend.brd <- unique(hull.line.col)
+                if (length(legend.brd) != length(legend.bgf)) legend.brd <- NULL
+            }
+            # handle lty specially; needed for both style & color
+            if (!is.null(legend.lty)) {
+                if (!length(legend.style.lab)) {
+                    legend.lty <- rep(legend.lty, length.out=length(legend.col.lab))
+                } else if (length(legend.col.lab)) {
+                    legend.lty <- c(legend.lty, rep(NA, length(legend.col.lab)))
+                }
+            }
+            # reconcile
+            if (identical(legend.style.lab, legend.col.lab)) {
+                legend.lab <- legend.col.lab
+                legend.merge <- FALSE
+            } else {
+                legend.lab <- c(legend.style.lab, legend.col.lab)
+                legend.pch <- c(legend.pch, rep(NA, length(legend.col.lab)))
+                # handle case where no lines / fills / pchs for color
+                if (length(legend.col.lab) && is.null(legend.bgf) &&
+                        is.null(legend.brd) && is.null(legend.lty)) {
+                    legend.bgf <- c(rep(NA, length(legend.style.lab)), legend.col)
+                    legend.brd <- legend.bgf
+                    legend.col <- c(rep(par("fg"), length(legend.style.lab)), legend.col)
+                # handle case where only hulls (only 1 fill col) but col.by.vowel
+                } else if (length(legend.col) != length(legend.bgf) &&
+                               !is.null(legend.bgf)) {
+                    legend.bgf <- c(rep(NA, length(legend.style.lab)), legend.col)
+                    legend.brd <- legend.bgf
+                    legend.col <- c(rep(par("fg"), length(legend.style.lab)), legend.col)
+                # handle other cases
+                } else {
+                    legend.bgf <- c(rep(NA, length(legend.style.lab)), legend.bgf)
+                    legend.brd <- c(rep(NA, length(legend.style.lab)), legend.brd)
+                    legend.col <- c(rep(par("fg"), length(legend.style.lab)), legend.col)
+                }
+            }
+            # eliminate vacuous args
+            if (identical(legend.bgf, logical(0))) legend.bgf <- NULL
+            if (identical(legend.brd, logical(0))) legend.brd <- legend.bgf
+            # assemble legend args
+            new.legend.args <- list(legend.kwd, legend=legend.lab, pch=legend.pch,
+                                    col=legend.col, lty=legend.lty)
+            # user override & recombine
+            new.legend.args[names(legend.args)] <- legend.args
+            legend.args <- new.legend.args
+            # can't always pass fill because fill=NULL triggers drawing empty boxes
+            # and border=NULL draws black! :(
+            if (!is.null(legend.bgf)) {
+                if (!"fill" %in% names(legend.args))   legend.args$fill   <- legend.bgf
+                if (!"border" %in% names(legend.args)) legend.args$border <- legend.brd
+            }
+            # avoid warning that merge only works when segments are drawn
+            if (!is.null(legend.lty)) {
+                if (!"merge" %in% names(legend.args)) legend.args$merge <- legend.merge
+            }
+            # draw legend
+            do.call(legend, legend.args)
+        }
+    }
+
+    # # # # # #
+    # CLEANUP #
+    # # # # # #
+    # close file devices
+    if (output != "screen") dev.off()
+    # reset graphical parameters to defaults
+    par(op)
 }
 
-# VOWEL PLOTTING FUNCTION
-plotVowels <- function(data=NULL, vowel=NULL, f1=NULL, f2=NULL, f3=NULL, f0=NULL, grouping.factor=NULL, norm.method='none', match.unit=TRUE, match.axes='absolute', points='text', means='text', points.label='auto', points.alpha=0.5, means.alpha=1, points.cex=0.6, means.cex=1.2, ignore.hidden=TRUE, ellipses=TRUE, ellipse.alpha=0.3173, polygon=TRUE, poly.order=NULL, single.plot=TRUE, titles='auto', axis.titles='auto', axis.cex=0.8, garnish.col='#666666FF', grayscale=FALSE, colors=NULL, shapes=NULL, lines=NULL, vary.colors=!grayscale, vary.shapes=grayscale, vary.lines=grayscale, legend=single.plot, output='screen', family='', pointsize=12, units='in', width=6.5, height=6.5, res=72, asp=NULL, point.arrows=TRUE, mean.arrows=TRUE, arrowhead.length=0.05, arrowhead.angle=30, point.arrow.width=1, mean.arrow.width=1.5) {
-# shapes.by=NULL, colors.by=NULL, lines.by=NULL
-# poly.method=c('hull','mean','voronoi')
-	# MAKE CASE-INSENSITIVE
-	norm.method <- tolower(norm.method)
-	match.axes <- tolower(match.axes)
-	output <- tolower(output)
-	points <- tolower(points)
-	means <- tolower(means)
-	# SOME DEFAULTS
-	if (!is.null(data)) {
-		if (is.null(vowel)) vowel <- 'vowel'
-		if (is.null(f1)) f1 <- 'f1'
-		if (is.null(f2)) f2 <- 'f2'
-	} else {
-		if (is.null(vowel)) vowel <- vowel
-		if (is.null(f1)) f1 <- f1
-		if (is.null(f2)) f2 <- f2
-	}
-	# OUTPUT TYPES
-	if (output=='jpeg') output <- 'jpg'
-	if (output=='tiff') output <- 'tif'
-	if (output %in% c('pdf','svg','screen')) {
-		if (units=='cm') {
-			width <- width/2.54
-			height <- height/2.54
-		} else if (units=='mm') {
-			width <- width/2540
-			height <- height/2540
-		} else if (units=='px') {
-			width <- width/72
-			height <- height/72
-		}
-	}
-	# CHECK FOR BOGUS ARGUMENTS, ETC
-	if (legend %in% c('top','topright','right','bottomright','bottom','bottomleft','left','topleft','center')) {
-		legend.pos <- legend
-		legend <- TRUE
-	} else if (!(legend %in% c(1,0))) {
-		warning('Unknown argument value \'', legend, '\': \'legend\' must be logical, or a character vector specifying location (e.g., \'top\', \'bottomright\', \'center\', etc).')
-		legend <- single.plot
-	} else {
-		legend.pos <- 'bottomleft'
-	}
-	if (single.plot & match.axes != 'absolute') {
-		match.axes <- 'absolute'
-		warning('When \'single.plot\'=TRUE, \'match.axes\' is coerced to \'absolute\'.')
-	}
-	if (!(match.axes %in% c('absolute','relative','none'))) {
-		warning('Unknown argument value \'', match.axes, '\': \'match.axes\' must be one of \'absolute\', \'relative\', or \'none\'. Using default (\'absolute\').')
-		match.axes <- 'absolute'
-	}
-	if (!(units %in% c('in','cm','mm','px'))) {
-	  warning('Unknown argument value \'', units, '\': \'units\' must be one of \'in\', \'cm\', \'mm\', or \'px\'. Using default (\'in\').')
-	  units <- 'in'
-	}
-	if (!(output %in% c('pdf','svg','jpg','tif','png','bmp','screen'))) {
-		warning('Unknown argument value \'', output, '\': \'output\' must be one of \'pdf\', \'svg\', \'png\', \'tif\', \'bmp\', \'jpg\', or \'screen\'. Using default (\'screen\').')
-		output <- 'screen'
-	}
-	if (!(points %in% c('shape','text','none'))) {
-		warning('Unknown argument value \'', points, '\': \'points\' must be one of \'shape\', \'text\', or \'none\'. Using default (\'text\').')
-		points <- 'text'
-	}
-	if (!(means %in% c('shape','text','none'))) {
-		warning('Unknown argument value \'', means, '\': \'means\' must be one of \'shape\', \'text\', or \'none\'. Using default (\'text\').')
-		means <- 'text'
-	}
-	if (ellipses & (ellipse.alpha<0 | ellipse.alpha>1)) {
-		warning('Ellipse size is measured as an alpha level, and must be within [0,1]. Using default (0.3173).')
-		ellipse.alpha <- 0.3173
-	}
-	if (!is.null(asp)) {
-		if (!is.numeric(asp) | asp <= 0) {
-			warning('Aspect ratio (horizontal/vertical) must be a positive number. Using default (\'NULL\', which adapts aspect ratio to maximize plot area usage).')
-			asp <- NULL
-		}
-	}
-	if (!match.unit & norm.method %in% c('s','scentroid','s-centroid','wattfabricius','watt-fabricius')) {
-		warning('Argument \'match.unit\' coerced to TRUE with norm.method \'s-centroid\': plotting Hz on axes is uninformative for linear transforms.')
-		match.unit <- TRUE
-	}
-	if (!(points.label[1] %in% c('auto')) & !(points %in% c('text'))) {
-	  warning('Argument \'points.label\' ignored unless points=\'text\'.')
-	}
-	# FONT HANDLING FOR WINDOWS (RELATED BLOCK AT END OF SCRIPT)
-	if (.Platform$OS.type=='windows' & family!='' & output %in% c('png','jpg','bmp','tif','screen')) {
-		oldFont <- windowsFonts()$sans
-		windowsFonts(sans=windowsFont(family))
-		family <- 'sans'
-		if (output=='screen') {
-			warning('FYI, font specification may fail if saving as PDF from onscreen plot window menu. To ensure PDF font fidelity, run plotVowels() with output=\'pdf\'.')
-		}
-	}
-	# DATA PREPROCESSING
-	group <- NULL
-	# GET THE DATA
-	if (!is.null(data)) {
-	  # TODO: if f1 is a vector of column names (for diphthong plotting), handle accordingly
-		f1 <- data[,match(eval(f1),colnames(data))]
-		f2 <- data[,match(eval(f2),colnames(data))]
-		vowel <- data[,match(eval(vowel),colnames(data))]
-		if (!is.null(f3)) f3 <- data[,match(eval(f3),colnames(data))]
-		if (!is.null(f0)) f0 <- data[,match(eval(f0),colnames(data))]
-		if (!is.null(grouping.factor)) {
-			group <- data[,match(eval(grouping.factor),colnames(data))]
-			group <- factor(group)
-		} else {
-			group <- rep('noGroupsDefined',length(f1))
-		}
-	  if (points.label[1] %in% c('auto')) points.label <- vowel
-	  else points.label <- data[,match(eval(points.label),colnames(data))]
-    diphthong <- FALSE # this is a temporary cheater step
-	} else { # is.null(data)
-	  if (is.null(dim(f1))) {
-	    diphthong <- FALSE
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+# OMNIBUS NORMALIZATION FUNCTION (convenience function) #
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+#' @export
+normVowels <- function(method, f0=NULL, f1=NULL, f2=NULL, f3=NULL,
+                    vowel=NULL, group=NULL, ...) {
+    m <- tolower(method)
+    methods <- c('bark', 'mel', 'log', 'erb', 'zscore', 'lobanov',
+                'logmean', 'shared', 'nearey1', 'nearey2', 'scentroid',
+                'wattfabricius')
+    if (!(m %in% methods)) {
+        stop('Method must be one of: bark, mel, log, erb, ',
+             'zscore | lobanov, logmean | nearey1, shared | nearey2, ',
+             'scentroid | wattfabricius.')
+    }
+    f <- cbind(f0=f0, f1=f1, f2=f2, f3=f3)
+    if (m %in% 'bark') return(normBark(f))
+    else if (m %in% 'mel') return(normMel(f))
+    else if (m %in% 'log') return(normLog(f))
+    else if (m %in% 'erb') return(normErb(f))
+    else if (m %in% c('z','zscore','lobanov')) return(normLobanov(f, group))
+    else if (m %in% c('logmean','nearey1')) return(normLogmean(f, group, ...))
+    else if (m %in% c('shared','nearey2')) return(normSharedLogmean(f, group, ...))
+    else {
+        f <- as.matrix(cbind(f1=f1, f2=f2))
+        return(normWattFabricius(f, vowel, group))
+}	}
+
+
+# INDIVIDUAL NORMALIZATION FUNCTIONS
+#' @export
+normBark <- function(f) {
+    bark <- 26.81 * f / (1960 + f) - 0.53
+    bark[bark < 2] <- bark[bark < 2] + 0.15 * (2 - bark[bark < 2])
+    bark[bark > 20.1] <- bark[bark > 20.1] + 0.22 * (bark[bark > 20.1] - 20.1)
+	return(bark)
+}
+
+#' @export
+normLog <- function(f) {
+    log10(f)
+}
+
+#' @export
+normMel <- function(f) {
+    2595*log10(1+f/700)
+}
+
+#' @export
+normErb <- function(f) {
+    21.4*log10(1+0.00437*f)
+}
+
+#' @export
+normLobanov <- function(f, group=NULL) {
+    if (is.null(group)) {
+        return(scale(f))
     } else {
-      if (!identical(dim(f1),dim(f2))) stop('F1 and F2 dimensions do not match.')
-      if (dim(f1)[2] > 2) stop('F1 and F2 must be either vectors or 2-column matrices.')
-      colnames(f1) <- c('f1a','f1b')
-      colnames(f2) <- c('f2a','f2b')
-#      if (!is.null(f3)) colnames(f3) <- c('f3a','f3b')
-#      if (!is.null(f0)) colnames(f0) <- c('f0a','f0b')
-      diphthong <- TRUE
-    } 
-	  if (!is.null(grouping.factor)) group <- factor(grouping.factor)
-	  else group <- rep('noGroupsDefined',nrow(f1))
-	  if (points.label[1] %in% c('auto')) points.label <- vowel
-	}
-	if (diphthong) {
-	  df <- data.frame(cbind(f1=f1[,1],f2=f2[,1],f3=f3[,1],f0=f0[,1]))
-	  dg <- data.frame(cbind(f1=f1[,2],f2=f2[,2],f3=f3[,2],f0=f0[,2]))
-	  df$vowel <- dg$vowel <- vowel
-	  df$group <- dg$group <- group
-	  df$pointlabel <- dg$pointlabel <- points.label
-	} else {
-	  if (!is.null(grouping.factor)) {
-      group <- factor(group)
-	  } else {
-	    group <- rep('noGroupsDefined',length(f1))
-	  }
-    df <- data.frame(cbind(f1,f2,f3,f0))
-    df$vowel <- vowel
-    df$group <- group
-    df$pointlabel <- points.label
-	}
-	rm(vowel,group,points.label)
-	# POLYGON ORDER HANDLING
-	if (is.null(poly.order)) {
-	# TODO: implement alternative polygon method (chull, voronoi, mean)
-#		if (polygon=='mean') {
-#			warning('No vowel order specified for polygon drawing, so no polygon will be drawn.')
-		if (polygon) {
-			warning('No vowel order specified for polygon drawing, so no polygon will be drawn.')
-			polygon <- FALSE
-		}
-	} else { # !is.null(poly.order)
-#		if (polygon=='mean') {
-		if (polygon) {
-			if(length(poly.order) != length(unique(poly.order))) warning('Duplicate entries in \'poly.order\' detected; they will be ignored.')
-			poly.order <- unique(as.character(poly.order)) # as.character in case someone passes in a pre-factored list of vowels
-			v <- unique(as.character(df$vowel))
-			if (length(setdiff(poly.order,v))>0) {
-				warning('There are vowels in \'poly.order\' that are not in \'vowel\'; they will be ignored.')
-				poly.order <- intersect(poly.order,v)
-			}
-		} else { # polygon != 'mean'
-#			warning('Argument \'poly.order\' ignored unless \'polygon\' is \'mean\'.')
-			warning('Argument \'poly.order\' ignored unless \'polygon\' is TRUE.')
-		}
-	}
-	# SORT THE DATA BY VOWEL, SO THAT POLYGON DRAWS IN PROPER ORDER.  SECONDARY ORDERING BY GROUP FOR CONVENIENCE
-	if (diphthong) {
-	  if (!is.null(poly.order)) {
-	    factorLevels <- c(poly.order,setdiff(v,poly.order))
-  	  df$vowel <- factor(df$vowel, levels=factorLevels)
-  	  factorLevels <- paste(factorLevels,rep('offset',length(factorLevels)),sep='_')
-  	  dg$vowel <- factor(paste(dg$vowel,rep('offset',length(dg$vowel)),sep='_'), levels=paste(poly.order,rep('offset',length(poly.order)),sep='_'))
-	  }
-	  dg <- dg[order(dg$vowel,dg$group),]
-	  dg$f1hz <- dg$f1
-	  dg$f2hz <- dg$f2
-	}
-  df <- df[order(df$vowel,df$group),]
-  df$f1hz <- df$f1
-  df$f2hz <- df$f2
-	# EXTRACT LISTS OF VOWEL & GROUP VALUES
-	glist <- unique(df$group)
-	vlist <- unique(df$vowel)
-	# THESE WARNINGS HAVE TO COME AFTER glist HAS BEEN DEFINED
-	if (length(titles)==1) {
-		if (!single.plot & length(glist)>1 & titles!='none' & titles!='auto') {
-			warning('Single title provided when \'single.plot\'=FALSE. All plots will have the same title.')
-		}
-	} else if (single.plot) {
-		warning('Multiple titles provided for a single plot. Only the first title will be used.')
-	} else if (length(titles) != length(glist)) {
-		warning('Mismatch between number of titles and number of groups. Titles will be recycled or discarded as necessary.')
-		titles <- rep(titles, length(glist))
-	}
-	if (length(axis.titles)>2) {
-	  warning('Too many axis titles supplied; only the first two will be used.')
-	} else if (length(axis.titles)<2 & axis.titles[1]!='auto') {
-	  warning('Too few axis titles supplied; values will be recycled.')
-	}
-	if (length(glist)>1 & norm.method %in% c('z','zscore','z-score','ztransform','z-transform','lobanov','s','scentroid','s-centroid','wattfabricius','watt-fabricius') & single.plot & !match.unit) {
-		warning('\'match.unit\' coerced to TRUE: cannot draw axes in Hz when normalizing via z-transform or s-centroid with multiple groups.')
-		match.unit <- TRUE
-	}
-	# NORMALIZE THE DATA
-	if (norm.method == 'nearey2') {
-		df[,1:2] <- normalizeVowels(f1=df$f1,f2=df$f2,f3=df$f3,f0=df$f0,method=norm.method)[,2:3]
-	} else if (norm.method %in% c('z','ztransform','zscore','lobanov')) {
-		df[,1:2] <- normalizeVowels(f1=df$f1,f2=df$f2,method=norm.method,grouping.factor=df$group)
-	} else if (norm.method %in% c('s','scentroid','wattfabricius')) {
-		df[,1:2] <- normalizeVowels(f1=df$f1,f2=df$f2,method=norm.method,grouping.factor=df$group,vowel=df$vowel)
-	} else if (norm.method != 'none') {
-		df[,1:2] <- normalizeVowels(f1=df$f1,f2=df$f2,method=norm.method)
-	}
-	# DETERMINE AXIS UNITS
-	if (norm.method %in% c('log','logmean','nearey1','nearey2')) {
-		unit <- 'log'
-	} else if (norm.method %in% c('lobanov','ztransform','zscore','z')) {
-		unit <- 'st.dev.'
-	} else if (norm.method %in% c('s','scentroid','wattfabricius')) {
-		unit <- 'Fn/S(Fn)'
-	} else if (norm.method == 'mel') {
-		unit <- 'Mel'
-	} else if (norm.method == 'bark') {
-		unit <- 'Bark'
-	} else if (norm.method == 'erb') {
-		unit <- 'E.R.B.'
-	} else {
-		unit <- 'Hz'
-	}
-	# CALCULATE ABSOLUTE EXTREMA & TABLES OF EXTREMA BY SUBJECT
-	if (match.unit & norm.method != 'none') { # use normalized values for everything
-		x <- df$f2
-		y <- df$f1
-		xmin.table <- tapply(df$f2,df$group,min)
-		xmax.table <- tapply(df$f2,df$group,max)
-		ymin.table <- tapply(df$f1,df$group,min)
-		ymax.table <- tapply(df$f1,df$group,max)
-	} else { # either don't match units or don't normalize, so use Hertz for everything
-		x <- df$f2hz
-		y <- df$f1hz
-		xmin.table <- tapply(df$f2hz,df$group,min)
-		xmax.table <- tapply(df$f2hz,df$group,max)
-		ymin.table <- tapply(df$f1hz,df$group,min)
-		ymax.table <- tapply(df$f1hz,df$group,max)
-	}
-	if (means != 'none') {
-		f2means <- tapply(x,list(df$vowel,df$group),mean) #rownames=vowels, colnames=groups
-		f1means <- tapply(y,list(df$vowel,df$group),mean)
-	}
-	if (ellipses) {
-		subsets <- by(cbind(x,y), list(df$vowel,df$group), identity)
-		centers <- lapply(subsets[!unlist(lapply(subsets, is.null))], colMeans)
-		covars <- lapply(subsets[!unlist(lapply(subsets, is.null))], cov)
-    covars <- lapply(covars,function(x) replace(x,is.na(x),0))
-		ellipse.args <- apply(cbind('mu'=centers, 'sigma'=covars, 'alpha'=ellipse.alpha, 'draw'=FALSE), 1, c)
-		ellipse.points <- lapply(ellipse.args, function(x){ do.call('ellipse',x) })
-		# extrema: formant x vowel x group (3-dimensional array)
-		ellipse.maxima <- array(unlist(lapply(ellipse.points, function(x){apply(x,2,max)})),dim=c(2,length(vlist),length(glist)),dimnames=list(c('f2','f1'),vlist,glist))
-		ellipse.minima <- array(unlist(lapply(ellipse.points, function(x){apply(x,2,min)})),dim=c(2,length(vlist),length(glist)),dimnames=list(c('f2','f1'),vlist,glist))
-		# extrema: formant x group (matrix)
-		ellipse.maxima.by.group <- apply(ellipse.maxima, c(1,3), max)
-		ellipse.minima.by.group <- apply(ellipse.minima, c(1,3), min)
-		# overall extrema by formant (vector)
-		ellipse.maxima.overall <- apply(ellipse.maxima, 1, max)
-		ellipse.minima.overall <- apply(ellipse.minima, 1, min)
-	}
-	if (match.axes=='absolute') {
-		# USE THE EXTREMA FROM THE WHOLE DATA FRAME (ALL AXES IDENTICAL)
-		if (ellipses) {
-			if (points=='none' & ignore.hidden) {
-				# USE ELLIPSES TO CALCULATE EXTREMA
-				xmin <- ellipse.minima.overall[1]
-				xmax <- ellipse.maxima.overall[1]
-				ymin <- ellipse.minima.overall[2]
-				ymax <- ellipse.maxima.overall[2]
-			} else {
-				# COMPARE POINTS & ELLIPSES TO CALCULATE EXTREMA
-				xmin <- min(c(ellipse.minima.overall[1], min(x,na.rm=TRUE)))
-				xmax <- max(c(ellipse.maxima.overall[1], max(x,na.rm=TRUE)))
-				ymin <- min(c(ellipse.minima.overall[2], min(y,na.rm=TRUE)))
-				ymax <- max(c(ellipse.maxima.overall[2], max(y,na.rm=TRUE)))
-			}
-		} else { # !ellipses
-			if (points=='none' & ignore.hidden) {
-				# USE MEANS TO CALCULATE EXTREMA
-				xmin <- min(f2means, na.rm=TRUE)
-				xmax <- max(f2means, na.rm=TRUE)
-				ymin <- min(f1means, na.rm=TRUE)
-				ymax <- max(f1means, na.rm=TRUE)
-			} else {
-				# USE POINTS TO CALCULATE EXTREMA
-				xmin <- min(xmin.table, na.rm=TRUE)
-				xmax <- max(xmax.table, na.rm=TRUE)
-				ymin <- min(ymin.table, na.rm=TRUE)
-				ymax <- max(ymax.table, na.rm=TRUE)
-			}
-		}
-	} else if (match.axes=='relative') {
-		# FIGURE OUT WHICH GROUP HAS THE LARGEST POINT RANGE & PAD THE OTHER GROUPS' EXTREMA TO MAKE UP THE DIFFERENCE
-		ranges.by.group <- rbind('f2'=xmax.table-xmin.table, 'f1'=ymax.table-ymin.table)
-		range.shortfall <- matrix(rep(apply(ranges.by.group,1,max), each=length(glist)), ncol=length(glist), byrow=TRUE) - ranges.by.group
-		point.maxima.by.group <- rbind('f2'=xmax.table,'f1'=ymax.table) + range.shortfall/2
-		point.minima.by.group <- rbind('f2'=xmin.table,'f1'=ymin.table) - range.shortfall/2
-		#     grp1  grp2  grp3  grp4  ...
-		# f2   x     x     x     x
-		# f1   y     y     y     y
-		if (ellipses) {
-			# FIGURE OUT WHICH GROUP HAS THE LARGEST ELLIPSE RANGE & PAD THE OTHER GROUPS' EXTREMA TO MAKE UP THE DIFFERENCE
-			ellipse.ranges.by.group <- ellipse.maxima.by.group - ellipse.minima.by.group
-			ellipse.range.shortfall <- matrix(rep(apply(ellipse.ranges.by.group,1,max), each=length(glist)), ncol=length(glist), byrow=TRUE) - ellipse.ranges.by.group
-			ellipse.maxima.by.group <- ellipse.maxima.by.group + ellipse.range.shortfall/2
-			ellipse.minima.by.group <- ellipse.minima.by.group - ellipse.range.shortfall/2
-			if (points=='none' & ignore.hidden) {
-				# USE ELLIPSES TO CALCULATE EXTREMA
-				xmin <- ellipse.minima.by.group[1,] # vector by group
-				xmax <- ellipse.maxima.by.group[1,]
-				ymin <- ellipse.minima.by.group[2,]
-				ymax <- ellipse.maxima.by.group[2,]
-			} else {
-				# COMPARE POINTS & ELLIPSES TO CALCULATE EXTREMA
-				xmin <- apply(rbind(point.minima.by.group[1,], ellipse.minima.by.group[1,]), 2, min) # vector by group
-				xmax <- apply(rbind(point.maxima.by.group[1,], ellipse.maxima.by.group[1,]), 2, max)
-				ymin <- apply(rbind(point.minima.by.group[2,], ellipse.minima.by.group[2,]), 2, min)
-				ymax <- apply(rbind(point.maxima.by.group[2,], ellipse.maxima.by.group[2,]), 2, max)
-			}
-		} else { # !ellipses
-			if (points=='none' & ignore.hidden) {
-				# USE MEANS TO CALCULATE EXTREMA
-				means.minima.by.group <- rbind('f2'=apply(f2means,2,min,na.rm=TRUE), 'f1'=apply(f1means,2,min,na.rm=TRUE))
-				means.maxima.by.group <- rbind('f2'=apply(f2means,2,max,na.rm=TRUE), 'f1'=apply(f1means,2,max,na.rm=TRUE))
-				means.ranges.by.group <- means.maxima.by.group - means.minima.by.group
-				means.range.shortfall <- matrix(rep(apply(means.ranges.by.group,1,max), each=length(glist)), ncol=length(glist), byrow=TRUE) - means.ranges.by.group
-				means.maxima.by.group <- means.maxima.by.group + means.range.shortfall/2
-				means.minima.by.group <- means.minima.by.group - means.range.shortfall/2
-				xmin <- means.minima.by.group[1,]
-				xmax <- means.maxima.by.group[1,]
-				ymin <- means.minima.by.group[2,]
-				ymax <- means.maxima.by.group[2,]
-			} else {
-				# USE POINTS TO CALCULATE EXTREMA
-				xmin <- point.minima.by.group[1,] # vector by group
-				xmax <- point.maxima.by.group[1,]
-				ymin <- point.minima.by.group[2,]
-				ymax <- point.maxima.by.group[2,]
-			}
-		}
-	} else { # match.axes=='none'
-		# USE DIFFERENT EXTREMA FOR EACH SUBSET (DIFFERENT PLOTS MAY VARY IN AXIS SCALES)
-		if (ellipses) {
-			if (points=='none' & ignore.hidden) {
-				# USE ELLIPSES TO CALCULATE EXTREMA
-				xmin <- ellipse.minima.by.group[1,]
-				xmax <- ellipse.maxima.by.group[1,]
-				ymin <- ellipse.minima.by.group[2,]
-				ymax <- ellipse.maxima.by.group[2,]
-			} else {
-				# COMPARE POINTS & ELLIPSES TO CALCULATE EXTREMA
-				xmin <- apply(rbind(ellipse.minima.by.group[1,], xmin.table), 2, max)
-				xmax <- apply(rbind(ellipse.maxima.by.group[1,], xmax.table), 2, max)
-				ymin <- apply(rbind(ellipse.minima.by.group[2,], ymin.table), 2, max)
-				ymax <- apply(rbind(ellipse.maxima.by.group[2,], ymax.table), 2, max)
-			}
-		} else { # !ellipses
-			if (points=='none' & ignore.hidden) {
-				# USE MEANS TO CALCULATE EXTREMA
-				xmin <- apply(f2means,2,min,na.rm=TRUE)
-				xmax <- apply(f2means,2,max,na.rm=TRUE)
-				ymin <- apply(f1means,2,min,na.rm=TRUE)
-				ymax <- apply(f1means,2,max,na.rm=TRUE)
-			} else {
-				# USE POINTS TO CALCULATE EXTREMA
-				xmin <- xmin.table
-				xmax <- xmax.table
-				ymin <- ymin.table
-				ymax <- ymax.table
-			}
-		}
-	}
-	# CALCULATE A SENSIBLE TICKMARK STEP SIZE
-	xrange <- xmax-xmin
-	yrange <- ymax-ymin
-	xsteps <- 10^(floor(log(xrange,10)))
-	ysteps <- 10^(floor(log(yrange,10)))
-	for (i in 1:length(xsteps)) {
-		if (xrange[i]/xsteps[i] < 1) {
-			xsteps[i] <- 0.1*xsteps[i]
-		} else if (xrange[i]/xsteps[i] < 2) {
-			xsteps[i] <- 0.2*xsteps[i]
-		} else if (xrange[i]/xsteps[i] < 5) {
-			xsteps[i] <- 0.5*xsteps[i]
-		}
-	}
-	for (i in 1:length(ysteps)) {
-		if (yrange[i]/ysteps[i] < 1) {
-			ysteps[i] <- 0.1*ysteps[i]
-		} else if (yrange[i]/ysteps[i] < 2) {
-			ysteps[i] <- 0.2*ysteps[i]
-		} else if (yrange[i]/ysteps[i] < 5) {
-			ysteps[i] <- 0.5*ysteps[i]
-		}
-	}
-	# COLORS, ETC
-	topmargin <- ifelse(length(titles)==1 & titles[1]=='none', 3, 5)
-	vowelcolors <- rep(hcl(0,0,0,means.alpha), length=length(glist)) # default color: (semitransparent) black
-	pointcolors <- rep(hcl(0,0,0,points.alpha), length=length(glist)) # default color: (semitransparent) black
-	linetypes <- rep(1, length=length(glist)) # default linetype: solid
-	symbols <- rep(16, length=length(glist)) # default symbol: filled circle
-	if (!is.null(shapes)) symbols <- rep(shapes, length=length(glist)) # user-defined
-	else if (vary.shapes) symbols <- rep(c(16,1,17,2,15,0,18,5,3,4,6), length=length(glist)) # filled/open{circle,triangle,square,diamond}, plus, x, inverted triangle
-	
-	if (!is.null(lines)) linetypes <- rep(lines, length=length(glist))
-	else if (vary.lines) linetypes <- rep(c('44', 'F4', '4313', 'F3131313', '23F3', '232923', '23258385', '282823B3', '13', '82', 'solid'), length=length(glist))
+        f <- as.data.frame(f)
+        groups <- split(f, group)
+        scaled <- lapply(groups, function(x) as.data.frame(scale(x)))
+        return(unsplit(scaled, group))
+}	}
 
-  if (!is.null(colors)) {
-    vowelcolors <- rep(colors, length=length(glist))
-    pointcolors <- rep(colors, length=length(glist))
-  } else if (vary.colors) {
-		if (grayscale) {
-			vals <- seq(0,80,length=length(glist)+1)
-			vals <- vals[-length(vals)]
-			vowelcolors <- hcl(h=0, c=0, l=vals, alpha=means.alpha, fixup=TRUE)
-			pointcolors <- hcl(h=0, c=0, l=vals, alpha=points.alpha, fixup=TRUE)
-		} else {
-			vowelcolors <- hcl(h=seq(0,360-(360/length(glist)),length=length(glist)), c=100, l=35, alpha=means.alpha, fixup=TRUE)
-			pointcolors <- hcl(h=seq(0,360-(360/length(glist)),length=length(glist)), c=100, l=35, alpha=points.alpha, fixup=TRUE)
-		}
+#' @export
+normLogmean <- function(f, group=NULL, exp=FALSE, ...) {
+    # AKA "Nearey1", what Adank confusingly calls "SingleLogmean".
+    # Note that Adank et al 2004 (eq. 8) looks more like a shared logmean,
+    # but in text she says it is applied to each formant separately.
+    if (ncol(f) < 2) {
+        stop("Missing values: normalization method 'normLogmean' ",
+            "requires non-null values for f1 and f2).")
+    }
+    if (is.null(group)) {
+        logmeans <- log(f) - rep(colMeans(log(f), ...), each=nrow(f))
+    } else {
+        f <- as.data.frame(f)
+        groups <- split(f, group)
+        logmeans <- lapply(groups,
+                           function(x) log(x) - rep(apply(log(x), 2, mean),
+                                                    each=nrow(x)))
+    logmeans <- unsplit(logmeans, group)
 	}
-	# IF PLOTTING ALL GROUPS ON ONE GRAPH, INITIALIZE OUTPUT DEVICE ONLY ONCE (BEFORE THE 'FOR' LOOP)
-	if (single.plot) {
-		if (output=='screen') {
-			op <- par(mfrow=c(1,1), mar=c(1,0.5,topmargin,4.5), mgp=c(0,0.3,0), oma=c(0,0,0,0), family=family, ps=pointsize)
-		} else {
-			# PDF
-			if (output=='pdf') {
-				cairo_pdf(filename=paste('vowels_by_',grouping.factor,'.pdf',sep=''), width=width, height=height, pointsize=pointsize, family=family)
-			# SVG
-			} else if (output=='svg') {
-				svg(filename=paste('vowels_by_',grouping.factor,'.svg',sep=''), width=width, height=height, pointsize=pointsize, family=family)
-			# JPG
-			} else if (output=='jpg') {
-				jpeg(filename=paste('vowels_by_',grouping.factor,'.jpg',sep=''), units=units, width=width, height=height, res=res, family=family, pointsize=pointsize, quality=100)
-			# TIF
-			} else if (output=='tif') {
-				tiff(filename=paste('vowels_by_',grouping.factor,'.tif',sep=''), units=units, width=width, height=height, res=res, family=family, pointsize=pointsize, compression='lzw')
-			# PNG
-			} else if (output=='png') {
-				png(filename=paste('vowels_by_',grouping.factor,'.png',sep=''), units=units, width=width, height=height, res=res, family=family, pointsize=pointsize)
-			# BMP
-			} else if (output=='bmp') {
-				bmp(filename=paste('vowels_by_',grouping.factor,'.bmp',sep=''), units=units, width=width, height=height, res=res, family=family, pointsize=pointsize)
-			}
-			par(mfrow=c(1,1), mar=c(1,0.5,topmargin,4.5), mgp=c(0,0.3,0), oma=c(0,0,0,0))
-		}
-	} else if (output=='screen') { # !single.plot, SO SET UP FOR LATTICE PLOTTING
-		num.rows <- num.cols <- ceiling(sqrt(length(glist)))
-		if(length(glist) <= num.rows*(num.rows-1)) {
-			num.rows <- num.rows-1
-		}
-	}
-  
-	# PLOT!
-	for (i in 1:length(glist)) {
-		# GET CURRENT GROUP'S DATA
-		curGroup <- glist[i]
-		if (diphthong) {
-		  curDataA <- df[df$group %in% curGroup,]
-		  curDataB <- dg[dg$group %in% curGroup,]
-		  curData <- data.frame(f1a=curDataA$f1, f1b=curDataB$f1, f2a=curDataA$f2, f2b=curDataB$f2, vowel=curDataA$vowel, pointlabel=curDataA$pointlabel, group=curDataA$group)
-		  curData$vowel <- factor(curData$vowel) # drop unused levels
-		  f2m <- data.frame(f2a=tapply(curData$f2a, curData$vowel, mean), f2b=tapply(curData$f2b, curData$vowel, mean))
-		  f1m <- data.frame(f1a=tapply(curData$f1a, curData$vowel, mean), f1b=tapply(curData$f1b, curData$vowel, mean))
-		} else {
-		  curData <- df[df$group %in% curGroup,]
-		  curData$vowel <- factor(curData$vowel) # drop unused levels
-		  f2m <- tapply(curData$f2, curData$vowel, mean)
-		  f1m <- tapply(curData$f1, curData$vowel, mean)
-		}
-		# IF PLOTTING EACH GROUP ON A SEPARATE GRAPH, INITIALIZE OUTPUT DEVICE ANEW FOR EACH GROUP
-		if (!single.plot & output!='screen') {
-		  # PDF
-		  if (output=='pdf') {
-			  cairo_pdf(filename=paste(curGroup,'.pdf',sep=''), width=width, height=height, pointsize=pointsize, family=family)
-		  # SVG
-		  } else if (output=='svg') {
-			  svg(filename=paste(curGroup,'.svg',sep=''), width=width, height=height, pointsize=pointsize, family=family)
-		  # JPG
-		  } else if (output=='jpg') {
-			  jpeg(filename=paste(curGroup,'.jpg',sep=''), units=units, width=width, height=height, res=res, family=family, pointsize=pointsize, quality=100)
-		  # TIF
-		  } else if (output=='tif') {
-			  tiff(filename=paste(curGroup,'.tif',sep=''), units=units, width=width, height=height, res=res, family=family, pointsize=pointsize, compression='lzw')
-		  # PNG
-		  } else if (output=='png') {
-			  png(filename=paste(curGroup,'.png',sep=''), units=units, width=width, height=height, res=res, family=family, pointsize=pointsize)
-		  # BMP
-		  } else if (output=='bmp') {
-			  bmp(filename=paste(curGroup,'.bmp',sep=''), units=units, width=width, height=height, res=res, family=family, pointsize=pointsize)
-		  }
-		  par(mfrow=c(1,1), mar=c(1,0.5,topmargin,4.5), mgp=c(0,0.3,0), oma=c(0,0,0,0))
-		}
-		# CALCULATE PLOT LIMITS & TICKS (MAX BEFORE MIN, TO GET THE AXES TO INCREASE LEFT/DOWN INSTEAD OF RIGHT/UP)
-		if (match.axes == 'absolute') { # ALL AXES IDENTICAL
-			xs <- max(xsteps)
-			ys <- max(ysteps)
-			xlims <- c(ceiling(max(xmax)/xs)*xs, floor(min(xmin)/xs)*xs)
-			ylims <- c(ceiling(max(ymax)/ys)*ys, floor(min(ymin)/ys)*ys)
-			xticks <- seq(xlims[2],xlims[1],xs)
-			yticks <- seq(ylims[2],ylims[1],ys)
-		} else if (match.axes == 'relative') { # SAME SCALE, MAYBE DIFFERENT LIMITS
-			xs <- max(xsteps)
-			ys <- max(ysteps)
-			xdiff <- max(ceiling(xmax/xs)-floor(xmin/xs)) - ceiling(xmax[i]/xs-floor(xmin[i]/xs))
-			ydiff <- max(ceiling(ymax/ys)-floor(ymin/ys)) - ceiling(ymax[i]/ys-floor(ymin[i]/ys))
-			xlims <- c(ceiling(ceiling(xdiff/2)+xmax[i]/xs)*xs, floor(floor(xdiff/2)+xmin[i]/xs)*xs)
-			ylims <- c(ceiling(ceiling(ydiff/2)+ymax[i]/ys)*ys, floor(floor(ydiff/2)+ymin[i]/ys)*ys)
-			xticks <- seq(xlims[2],xlims[1],xs)
-			yticks <- seq(ylims[2],ylims[1],ys)
-		} else { # match.axes == 'none' # AXES MAYBE DIFFERENT SCALES & LIMITS
-			xs <- xsteps[i]
-			ys <- ysteps[i]
-			xlims <- c(ceiling(xmax[i]/xs)*xs, floor(xmin[i]/xs)*xs)
-			ylims <- c(ceiling(ymax[i]/ys)*ys, floor(ymin[i]/ys)*ys)
-			xticks <- seq(xlims[2],xlims[1],xs)
-			yticks <- seq(ylims[2],ylims[1],ys)
-		}
-		# TRANSFORM TICKMARKS FROM HERTZ TO NORMALIZED UNIT (IF REQUIRED)
-		xtext <- xticks
-		ytext <- yticks
-		if (norm.method != 'none' & !match.unit) {
-			if (norm.method %in% c('z','zscore','z-score','ztransform','z-transform','lobanov')) {
-	      xticks <- (xticks-mean(curData$f2hz))/sd(curData$f2hz)
-	      yticks <- (yticks-mean(curData$f1hz))/sd(curData$f1hz)
-			} else if (norm.method %in% c('logmean','nearey1')) {
-	      xticks <- log(xticks)-mean(log(curData$f2hz))
-	      yticks <- log(yticks)-mean(log(curData$f1hz))
-			} else {
-	      xticks <- normalizeVowels(f2=xticks,method=norm.method) # y,x
-	      yticks <- normalizeVowels(f1=yticks,method=norm.method) # y,x
-			}
-			xlims <- c(max(xticks),min(xticks))
-			ylims <- c(max(yticks),min(yticks))
-		}
-		# DRAW AXES & MARGIN TEXT, UNLESS OVERPLOTTING AND WE'RE ALREADY PAST THE FIRST GROUP
-		if (!single.plot & output=='screen' & i==1) {
-		  # INITIALIZE ONSCREEN LATTICE LAYOUT
-		  op <- par(mfrow=c(num.rows,num.cols), mar=c(1,0.5,topmargin,4.5), mgp=c(0,0.3,0), oma=c(0,0,0,0), family=family, ps=pointsize)
-	  }
-		if (!single.plot | i==1) {
-			# INITIALIZE EMPTY PLOT
-			plot(0, 0, xlim=xlims, ylim=ylims, type='n', axes=FALSE, ann=FALSE, frame.plot=FALSE, asp=asp)
-			# AXES
-			axis(3, at=xticks, labels=xtext, las=0, col=garnish.col, col.ticks=garnish.col, col.axis=garnish.col, cex.axis=axis.cex, tck=-.005)
-			axis(4, at=yticks, labels=ytext, las=2, col=garnish.col, col.ticks=garnish.col, col.axis=garnish.col, cex.axis=axis.cex, tck=-.005)
-			# TITLE
-			if (is.null(data)) {
-			  title.factor <- as.character(quote(grouping.factor))
-			} else {
-			  title.factor <- grouping.factor
-			}
-			if (titles[1]=='auto') {
-				# AUTO-GENERATE TITLES
-				if(glist[1] == 'noGroupsDefined') {
-				  title <- 'Vowels'
-				} else if (!single.plot) {
-				  title <- paste('Vowels (', curGroup,')',sep='')
-				} else {
-				  title <- paste('Vowels by', title.factor)
-				}
-  			mtext(title, side=3, cex=1.2, las=1, line=3.25, font=2)
-			} else if (titles[1]!='none') {
-				# USE USER-SUPPLIED TITLES
-				mtext(titles[i], side=3, cex=1.2, las=1, line=3.25, font=2)
-			}
-			# AXIS LABELS
-			if (axis.titles[1] != 'auto') {
-			  hlabel <- axis.titles[1]
-			  vlabel <- axis.titles[2]
-			} else if (norm.method != 'none' & !match.unit) {
-			  hlabel <- paste('F2 (',unit,'-scaled Hz)', sep='')
-			  vlabel <- paste('F1 (',unit,'-scaled Hz)', sep='')
-			} else {
-			  hlabel <- paste('F2 (',unit,')',sep='')
-			  vlabel <- paste('F1 (',unit,')',sep='')
-			}
-			mtext(hlabel, side=3, cex=0.8, las=1, line=1.5, font=2, col=garnish.col)
-			mtext(vlabel, side=4, cex=0.8, las=3, line=2.5, font=2, col=garnish.col)
-		# REUSE THE SAME PLOT
-		} else if (single.plot) {
-			par(new=TRUE)
-		} # if (!single.plot | i==1)
+    if (exp) logmeans <- exp(logmeans)
+    logmeans
+}
 
-		# PLOT VOWEL POINTS
-		if (diphthong) {
-		  if (point.arrows) {
-		    arrows(curData$f2a, curData$f1a, curData$f2b, curData$f1b, col=pointcolors[i], length=arrowhead.length, angle=arrowhead.angle, lwd=point.arrow.width)
-		  }
-		  if (points=='shape') {
-		    if (point.arrows) { # don't plot where the arrowhead will be
-    			points(curData$f2a, curData$f1a, type='p', pch=symbols[i], cex=points.cex, col=pointcolors[i])
-		    } else {
-  		    segments(curData$f2a, curData$f1a, curData$f2b, curData$f1b, col=pointcolors[i])
-    			points(curData$f2a, curData$f1a, type='p', pch=symbols[i], cex=points.cex, col=pointcolors[i])
-          points(curData$f2b, curData$f1b, type='p', pch=symbols[i], cex=points.cex, col=pointcolors[i])
-		    }
-		  } else if (points=='text') {
-		    if (point.arrows) { # don't plot where the arrowhead will be
-    			text(curData$f2a, curData$f1a, curData$pointlabel, col=pointcolors[i], font=1, cex=points.cex)
-#    			text(curData$f2a, curData$f1a, curData$vowel, col=pointcolors[i], font=1, cex=points.cex)
-		    } else {
-  		    segments(curData$f2a, curData$f1a, curData$f2b, curData$f1b, col=pointcolors[i])
-    			text(curData$f2a, curData$f1a, curData$pointlabel, col=pointcolors[i], font=1, cex=points.cex)
-    			text(curData$f2b, curData$f1b, curData$pointlabel, col=pointcolors[i], font=1, cex=points.cex)
-#    			text(curData$f2a, curData$f1a, curData$vowel, col=pointcolors[i], font=1, cex=points.cex)
-#    			text(curData$f2b, curData$f1b, curData$vowel, col=pointcolors[i], font=1, cex=points.cex)
-		    }
-		  }
-		} else if (points=='shape') { # !diphthong
-			points(curData$f2, curData$f1, type='p', pch=symbols[i], cex=points.cex, col=pointcolors[i])
-		} else if (points=='text') {
-			text(curData$f2, curData$f1, curData$pointlabel, col=pointcolors[i], font=1, cex=points.cex)
-#			text(curData$f2, curData$f1, curData$vowel, col=pointcolors[i], font=1, cex=points.cex)
-		}
-		# PLOT ELLIPSES AROUND VOWEL MEANS
-		# TODO: add a way to plot only nucleus ellipse, not offglide
-		if (ellipses) {
-			# CALCULATE COVARIANCE MATRICES
-			covar <- list()
-			if (diphthong) {
-  			curVowels <- rownames(f2m)
-			  covar2 <- list()
-			  for (j in 1:length(curVowels)) {
-			    curVowelData <- curData[curData$vowel %in% curVowels[j],]
-			    covar[[j]] <- cov(cbind(curVowelData$f2a, curVowelData$f1a))
-			    covar2[[j]] <- cov(cbind(curVowelData$f2b, curVowelData$f1b))
-				  if (!is.na(covar[[j]][1])) {
-					  ellipse(c(f2m$f2a[j], f1m$f1a[j]), covar[[j]], type='l', col=vowelcolors[i], lty=linetypes[i], alpha=ellipse.alpha)
-					  ellipse(c(f2m$f2b[j], f1m$f1b[j]), covar2[[j]], type='l', col=vowelcolors[i], lty=linetypes[i], alpha=ellipse.alpha)
-				  }
-			  }
-			} else { # !diphthong
-  			curVowels <- names(f2m) # unique(curData$vowel)
-			  for (j in 1:length(curVowels)) {
-				  curVowelData <- curData[curData$vowel %in% curVowels[j],] #	curVowelData <- subset(curData, vowel==curVowels[j])
-				  covar[[j]] <- cov(cbind(curVowelData$f2, curVowelData$f1))
-				  # PLOT ELLIPSES
-				  if (!is.na(covar[[j]][1])) {
-					  ellipse(c(f2m[j], f1m[j]), covar[[j]], type='l', col=vowelcolors[i], lty=linetypes[i], alpha=ellipse.alpha)
-				  }
-			  }
-			}
-		}
-		# DRAW POLYGON BETWEEN MEANS
-		if (polygon) {
-		  if (diphthong) {
-  			points(f2m$f2a[poly.order], f1m$f1a[poly.order], type='c', cex=(means.cex+0.25), col=vowelcolors[i], lty=linetypes[i])
-  			points(f2m$f2b[poly.order], f1m$f1b[poly.order], type='c', cex=(means.cex+0.25), col=vowelcolors[i], lty=linetypes[i])
-		  } else {
-  			points(f2m[poly.order], f1m[poly.order], type='c', cex=(means.cex+0.25), col=vowelcolors[i], lty=linetypes[i])
-		  }
-		}
-		# PLOT VOWEL MEANS
-		if (diphthong) {
-		  if (mean.arrows) {
-		    arrows(f2m$f2a, f1m$f1a, f2m$f2b, f1m$f1b, cex=means.cex, col=vowelcolors[i], length=arrowhead.length, angle=arrowhead.angle, lwd=mean.arrow.width)
-		  }
-		  if (means=='shape') {
-		    if (mean.arrows) { # don't plot where the arrowhead will be
-			    points(f2m$f2a, f1m$f1a, type='p', pch=symbols[i], cex=means.cex, col=vowelcolors[i])
-		    } else {
-			    points(f2m$f2a, f1m$f1a, type='p', pch=symbols[i], cex=means.cex, col=vowelcolors[i])
-			    points(f2m$f2b, f1m$f1b, type='p', pch=symbols[i], cex=means.cex, col=vowelcolors[i])
-		    }
-		  } else if (means=='text') {
-		    if (mean.arrows) { # don't plot where the arrowhead will be
-			    text(f2m$f2a, f1m$f1a, rownames(f2m), col=vowelcolors[i], font=2, cex=means.cex)
-		    } else {
-			    text(f2m$f2a, f1m$f1a, rownames(f2m), col=vowelcolors[i], font=2, cex=means.cex)
-			    text(f2m$f2b, f1m$f1b, rownames(f2m), col=vowelcolors[i], font=2, cex=means.cex)
-		    }
-		  }
-		} else { # !diphthong
-		  if (means=='shape') {
-			  points(f2m, f1m, type='p', pch=symbols[i], cex=means.cex, col=vowelcolors[i])
-		  } else if (means=='text') {
-			  text(f2m, f1m, names(f2m), col=vowelcolors[i], font=2, cex=means.cex)
-		  }
-		}
-    # PLOT LEGEND
-		if (legend & (!single.plot | i==length(glist))) {
-			if (points=='shape' | means=='shape') {
-				if (ellipses | polygon) { # lines, symbols
-					legend(legend.pos, legend=glist, fill=NA, border=NA, col=vowelcolors, lty=linetypes, lwd=1.5, pch=symbols, bty='n', inset=0.05, seg.len=3.5) # cex, lwd=1, border='n', text.font=1
-				} else { # symbols only
-					legend(legend.pos, legend=glist, fill=NA, border=NA, col=vowelcolors, pch=symbols, bty='n', inset=0.05) # cex, lwd=1, border='n', text.font=1
-				}
-			} else {
-				if (ellipses | polygon) { # lines only
-					legend(legend.pos, legend=glist, fill=NA, border=NA, col=vowelcolors, lty=linetypes, lwd=1.5, bty='n', inset=0.05, seg.len=3.5) # cex, lwd=1, border='n', text.font=1
-				} else { # boxes only
-					legend(legend.pos, legend=glist, fill=vowelcolors, border=NA, bty='n', inset=0.05) # cex, lwd=1, border='n', text.font=1
-				}
-			}
-		}
-		# CLOSE THE OUTPUT DEVICE FOR EACH INDIVIDUAL GROUP PLOT (UNLESS OUTPUT = SCREEN)
-		if (!single.plot & output!='screen') dev.off()
-	} # for(i in 1:length(groups))
-	# CLOSE THE OUTPUT DEVICE FOR SINGLE OVERPLOTTED GRAPH (UNLESS OUTPUT = SCREEN)
-	if (single.plot & output!='screen') dev.off()
-	# RESET ORIGINAL GRAPHING PARAMETERS
-	if (output == 'screen') par(op)
-	# FONT HANDLING FOR WINDOWS
-	if (.Platform$OS.type=='windows' & family!='' & output %in% c('png','jpg','bmp','tif','screen')) windowsFonts(sans=oldFont)
-} #plotVowels <- function(...)
+#' @export
+normNearey1 <- function(f, group=NULL, exp=FALSE, ...) {
+    normLogmean(f, group=group, exp=exp, ...)
+}
+
+#' @export
+normSharedLogmean <- function(f, group=NULL, exp=FALSE, ...) {
+    # AKA "Nearey2"
+    if (is.null(group)) {
+        # this is my implementation of Nearey 1978's CLIH (eq. 3.1.10, page 95)
+        # (cf. eqs. 1 & 2 of Morrison & Nearey 2006)
+        logmeans <- log(f) - mean(log(unlist(f)), ...)
+        # NOTE: Adank et al 2004 (eq. 9) would suggest this implementation:
+        # logmeans <- log(f) - sum(colMeans(log(f), ...))
+    } else {
+        f <- as.data.frame(f)
+        groups <- split(f, group)
+        logmeans <- lapply(groups, function(x) log(x) - mean(log(unlist(x)), ...))
+        # Adank:    lapply(groups, function(x) log(x) - sum(colMeans(log(x), ...)))
+        logmeans <- unsplit(logmeans, group)
+	}
+    if (exp) logmeans <- exp(logmeans)
+    logmeans
+}
+
+#' @export
+normNearey2 <- function(f, group=NULL, exp=FALSE, ...) {
+    normSharedLogmean(f, group=group, exp=exp, ...)
+}
+
+#' @export
+normWattFabricius <- function(f, vowel, group=NULL) {
+    if (ncol(f) != 2) {
+        stop("Wrong dimensions: s-centroid normalization requires an Nx2 ",
+             "matrix or data frame of F1 and F2 values.")
+    }
+    if (is.null(group)) group <- rep("g", nrow(f))
+    subsets <- by(f, list(vowel, group), identity)  # 2D list (group x vowel) of lists (f1,f2)
+    means <- matrix(sapply(subsets, function(i) ifelse(is.null(i),
+                                                    data.frame(I(c(f1=NA, f2=NA))),
+                                                    data.frame(I(colMeans(i))))
+                        ), nrow=nrow(subsets), dimnames=dimnames(subsets))
+    minima <- do.call(rbind, apply(means, 2, function(i) data.frame(t(apply(do.call(rbind, i), 2, min, na.rm=TRUE)))))
+    maxima <- do.call(rbind, apply(means, 2, function(i) data.frame(t(apply(do.call(rbind, i), 2, max, na.rm=TRUE)))))
+    min.id <- apply(means, 2, function(i) apply(do.call(rbind, i), 2, which.min))
+    max.id <- apply(means, 2, function(i) apply(do.call(rbind, i), 2, which.max))
+    if (length(unique(min.id['f1',]))>1) {
+        warning("The vowel with the lowest mean F1 value (usually /i/)",
+                "does not match across all speakers/groups. You'll ",
+                "have to calculate s-centroid manually.")
+        print(data.frame(minF1=minima["f1",],
+                vowel=dimnames(means)[[1]][min.id["f1",]],
+                group=dimnames(means)[[2]]))
+        stop()
+    } else if (length(unique(max.id["f1",]))>1) {
+        warning("The vowel with the highest mean F1 value (usually /a/) ",
+                "does not match across all speakers/groups. You'll ",
+                "have to calculate s-centroid manually.")
+        print(data.frame(maxF1=round(maxima["f1",]),
+                vowel=dimnames(means)[[1]][max.id["f1",]],
+                group=dimnames(means)[[2]]))
+        stop()
+    }
+    lowvowf2 <- do.call(rbind, means[unique(max.id["f1",]),])[,"f2"]
+    centroids <- t(rbind(f1=(2*minima$f1 + maxima$f1) / 3,
+    				     f2=(minima$f2 + maxima$f2 + lowvowf2) / 3))
+    f / centroids[group,]
+}
+
+
+# # # # # # # # # # # # # # # # #
+# SECONDARY ANALYSIS FUNCTIONS  #
+# # # # # # # # # # # # # # # # #
+
+#' @export
+vowelMeansPolygonArea <- function(f1, f2, vowel, poly.order, group=NULL) {
+    if (length(poly.order) != length(unique(poly.order))) {
+        warning("Duplicate entries in 'poly.order' detected; they will be ",
+                "ignored.")
+    }
+    poly.order <- unique(as.character(poly.order)) # as.character in case factor
+    v <- unique(as.character(vowel))
+    if (length(setdiff(poly.order, v)) > 0) {
+        warning("There are vowels in 'poly.order' that are not in ",
+                "'vowel'; they will be ignored.")
+        poly.order <- intersect(poly.order, v)
+    }
+    if (is.null(group))  group <- "all.points"
+    df <- data.frame(f2=f2, f1=f1, v=factor(vowel, levels=poly.order), g=group)
+    df <- df[order(df$v),]
+    bygrouparea <- c(by(df, df$g, function(i) splancs::areapl(cbind(tapply(i$f2, i$v, mean),
+                                                                    tapply(i$f1, i$v, mean)))))
+}
+
+#' @export
+convexHullArea <- function(f1, f2, group=NULL) {
+    if (is.null(group))  group <- "all.points"
+    df <- data.frame(x=f2, y=f1, g=group, stringsAsFactors=FALSE)
+    bygrouppts <- by(df, df$g, function(i) i[chull(i$x, i$y), c("x", "y")])
+    bygrouparea <- sapply(bygrouppts, function(i) {
+        splancs::areapl(as.matrix(data.frame(x=i$x, y=i$y, stringsAsFactors=FALSE)))
+})  }
+
+#' @export
+repulsiveForce <- function(x, y, type, xform=log, exclude.inf=TRUE) {
+    dmat <- as.matrix(dist(cbind(x, y)))
+    if (exclude.inf) dmat[dmat == 0] <- min(dmat[dmat>0]) / 2
+    force <- sapply(seq_along(type), function(i) {
+        sum(1 / dmat[i, !(type %in% type[i])] ^ 2)
+    })
+    if (!is.null(xform)) force <- xform(force)
+    force
+}
+
+#' @export
+repulsiveForceHeatmap <- function(x, y, type=NULL, xform=log, exclude.inf=TRUE,
+                                  resolution=10, colormap=NULL, fast=FALSE, ...) {
+    # default to grayscale
+    if (is.null(colormap)) colormap <- plotrix::color.scale(x=0:100, cs1=0, cs2=0,
+                                                            cs3=c(25,100),
+                                                            color.spec="hcl")
+    # create grid encompassing vowel space
+    gridlist <- createGrid(x, y, resolution)
+    xgrid <- gridlist$x
+    ygrid <- gridlist$y
+    grid <- gridlist$g
+    grid$z <- NA
+    grid$v <- NA
+    # if using fast method, pre-calculate force of vowel tokens
+    force <- repulsiveForce(x, y, type, xform, exclude.inf)
+    if (fast) vertices <- data.frame(x=x, y=y, z=force)[!is.na(x) & !is.na(y),]
+    else      vertices <- data.frame(x=x, y=y, z=type)[!is.na(x) & !is.na(y),]
+    if (fast) {
+        # segregate grid points based on Delaunay triangulation of vowel space
+        triang.obj <- with(vertices, deldir::deldir(x, y, z=z, suppressMsge=TRUE))
+        triangs <- deldir::triang.list(triang.obj)
+        sg.idxs <- lapply(triangs, function(i) splancs::inpip(grid, i[c("x", "y")],
+                                                              bound=TRUE))
+        subgrids <- lapply(sg.idxs, function(i) grid[i,])
+        # ignore triangles too small to contain any grid points
+        vacant <- sapply(subgrids, function(i) dim(i)[1] == 0)
+        triangs <- triangs[!vacant]
+        subgrids <- subgrids[!vacant]
+        sg.idxs <- sg.idxs[!vacant]
+        # assign a force value to each grid point
+        sg.force <- mapply(function(i, j) fillTriangle(i[,"x"], i[,"y"],
+                                                       j[, c("x", "y", "z")]),
+                           subgrids, triangs, SIMPLIFY=FALSE)
+        grid[do.call(c, sg.idxs), "z"] <- do.call(c, sg.force)
+    } else {
+        if (is.null(type)) stop("More accurate force calculation method (fast=FALSE) ",
+                                "requires non-null values for 'type'.")
+        hull <- vertices[chull(vertices),]  # polygon of hull
+        sg.idxs <- splancs::inpip(grid[,1:2], hull)
+        subgrid <- grid[sg.idxs,]
+        # which vowel is closest to each grid point?
+        dmat <- apply(subgrid, 1, function(i) apply(as.matrix(vertices[c('x','y')]),
+                                                    1, function(j) dist(rbind(i, j))))
+        # still need to exclude inf, in case duplicate pts have diff vowels
+        if (exclude.inf) dmat[dmat == 0] <- min(dmat[dmat>0]) / 2
+        # if there is a tie of which vowel is closest, pick first one (arbitrarily)
+        which.min <- apply(dmat, 2, function(i) which(i == min(i))[1])
+        #how.many.min <- apply(dmat, 2, function(i) length(which(i == min(i))))
+        # TODO: sensible way to do tiebreaker? wherever how.many.min > 1, look at
+        # next closest vowel iteratively until you find one that matches one of the
+        # vowels tied as closest... could get ugly.
+        sg.vowel <- vertices$z[which.min]
+        sg.force <- sapply(seq_along(sg.vowel),
+                           function(i) sum(1/dmat[!(vertices$z %in% sg.vowel[i]), i] ^ 2))
+        if (!is.null(xform)) sg.force <- xform(sg.force)
+        grid[sg.idxs, "z"] <- sg.force
+    }
+    image(xgrid, ygrid, matrix(grid$z, nrow=length(xgrid)),
+          col=colormap, ...)
+}
+
+#' @export
+repulsiveForceHeatmapLegend <- function (x, y, labels=c("low", "high"), pos=c(1, 3),
+                                         colormap=NULL, smoothness=50, lend=2,
+                                         lwd=12, ...) {
+    if (is.null(colormap)) {  # default to grayscale
+        colormap <- plotrix::color.scale(x=0:100, cs1=0, cs2=0, cs3=c(0,100),
+                                         alpha=1, color.spec="hcl")
+    }
+    xvals <- seq(x[1], x[2], length.out=smoothness)
+    yvals <- seq(y[1], y[2], length.out=smoothness)
+    cols <- colormap[round(seq(1, length(colormap), length.out=smoothness))]
+    invisible(plotrix::color.scale.lines(xvals, yvals, col=cols, lend=lend,
+                                         lwd=lwd, ...))
+    if (!is.null(labels)) {
+        text(x, y, labels=labels, pos=pos, xpd=TRUE)
+    }
+}
+
+
+# # # # # # # # # # # # # # # # # #
+# UTILITY FUNCTIONS: NOT EXPORTED #
+# # # # # # # # # # # # # # # # # #
+prettyTicks <- function(lim) {
+    axrange <- abs(diff(lim))
+    step <- 10^(floor(log(axrange,10)))
+    coef <- ifelse(axrange/step < 1, 0.1,
+                   ifelse(axrange/step < 2, 0.2,
+                          ifelse(axrange/step < 5, 0.5, 1)))
+    step <- step*coef
+    lims <- c(ceiling(max(lim)/step)*step, floor(min(lim)/step)*step)
+    if (diff(lims) < 0) {step <- -step}
+    seq(lims[1],lims[2],step)
+}
+
+ellipse <- function(mu, sigma, alpha=0.05, npoints=250, draw=TRUE, ...) {
+    # adapted from the (now-defunct) mixtools package
+    if (all(sigma == matrix(rep(0, 4), nrow=2))) return(rbind(mu, mu))
+    es <- eigen(sigma)
+    e1 <- es$vec %*% diag(sqrt(es$val))
+    r1 <- sqrt(qchisq(1 - alpha, 2))
+    theta <- seq(0, 2 * pi, len=npoints)
+    v1 <- cbind(r1 * cos(theta), r1 * sin(theta))
+    pts <- t(mu - (e1 %*% t(v1)))
+    if (draw) {
+        colnames(pts) <- c("x", "y")
+        polygon(pts, ...)
+    }
+    invisible(pts)
+}
+
+makeTransparent <- function (color, opacity) {
+    rgba <- t(col2rgb(color, alpha=TRUE))
+    rgba[,4] <- round(255 * opacity)
+    colnames(rgba) <- c("red", "green", "blue", "alpha")
+    trans.color <- do.call(rgb, c(as.data.frame(rgba), maxColorValue=255))
+}
+
+# pineda's triangle filling algorithm
+fillTriangle <- function(x, y, vertices) {
+    x0 <- vertices[1,1]
+    x1 <- vertices[2,1]
+    x2 <- vertices[3,1]
+    y0 <- vertices[1,2]
+    y1 <- vertices[2,2]
+    y2 <- vertices[3,2]
+    z0 <- vertices[1,3]
+    z1 <- vertices[2,3]
+    z2 <- vertices[3,3]
+    e0xy <- (x-x0)*(y1-y0)-(y-y0)*(x1-x0)
+    e1xy <- (x-x1)*(y2-y1)-(y-y1)*(x2-x1)
+    e2xy <- (x-x2)*(y0-y2)-(y-y2)*(x0-x2)
+    e0x2 <- (x2-x0)*(y1-y0)-(y2-y0)*(x1-x0)
+    e1x0 <- (x0-x1)*(y2-y1)-(y0-y1)*(x2-x1)
+    e2x1 <- (x1-x2)*(y0-y2)-(y1-y2)*(x0-x2)
+    f0 <- e0xy / e0x2
+    f1 <- e1xy / e1x0
+    f2 <- e2xy / e2x1
+    z <- f0*z2 + f1*z0 + f2*z1
+}
+
+# create grid encompassing all pts (x, y) with `resolution` pts along short dimension
+createGrid <- function(x, y, resolution) {
+    vertices <- data.frame(x=x, y=y)
+    vertices <- vertices[!is.na(vertices$x) & !is.na(vertices$y),]
+    bounding.rect <- apply(vertices[c("x", "y")], 2, range, na.rm=TRUE)
+    xr <- abs(diff(bounding.rect[,"x"]))
+    yr <- abs(diff(bounding.rect[,"y"]))
+    if (xr > yr) {
+        xres <- round(resolution * xr / yr)
+        yres <- resolution
+    } else {
+        xres <- resolution
+        yres <- round(resolution * yr / xr)
+    }
+    xgrid <- seq(floor(bounding.rect[1, 1]), ceiling(bounding.rect[2, 1]),
+                 length.out=xres)
+    ygrid <- seq(floor(bounding.rect[1, 2]), ceiling(bounding.rect[2, 2]),
+                 length.out=yres)
+    grid <- expand.grid(x=xgrid, y=ygrid)
+    list(g=grid, x=xgrid, y=ygrid)
+}
