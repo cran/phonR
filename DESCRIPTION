@@ -1,8 +1,8 @@
 Package: phonR
 Type: Package
 Title: Tools for Phoneticians and Phonologists
-Version: 1.0-1
-Date: 2015-03-05
+Version: 1.0-3
+Date: 2015-04-18
 Author: Daniel R. McCloy
 Maintainer: Daniel R. McCloy <drmccloy@uw.edu>
 Depends: R (>= 2.10)
@@ -13,7 +13,7 @@ URL: http://drammock.github.io/phonR/
 BugReports: https://github.com/drammock/phonR/issues
 LazyLoad: yes
 LazyData: yes
-Packaged: 2015-03-05 13:26:40 UTC; dan
+Packaged: 2015-04-19 01:42:07 UTC; dan
 NeedsCompilation: no
 Repository: CRAN
-Date/Publication: 2015-03-05 15:16:40
+Date/Publication: 2015-04-19 07:52:19
