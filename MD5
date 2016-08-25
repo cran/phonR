@@ -1,10 +1,10 @@
-c69162db50e5f7264a421a9869955974 *DESCRIPTION
-0490c4cb9bff9f3887fced78c75d02ac *NAMESPACE
-5f6e82b0da540eed3f79a927395ce924 *R/phonR.R
+8c41be602430d3202f58a6d8ca1df762 *DESCRIPTION
+5d47d805c80ad5552bc5d1023f5cad19 *NAMESPACE
+1992dacec37ce2237b849acc15f32130 *R/phonR.R
 3aef6c97bd55a74486bf857653e832c8 *data/indoVowels.rda
-8fb7a04926ac26b4d97f5e813d457aac *inst/CITATION
+8d812c467540776201a4191da13b5a80 *inst/CITATION
 168057db57a12a06e8bf794e0259157c *man/indo.Rd
-2e80e2e281dd8e2e12fcdb0546dcfad0 *man/normVowels.Rd
-65917c2783ac6140d5df38ca51094df9 *man/plotVowels.Rd
+2a1ffbd86140b8e8bfa4e6cd2e3088a0 *man/normVowels.Rd
+8b0de2e67f7ed2e62eaa88528bace88d *man/plotVowels.Rd
 5889fdbb075f840db870385d2f2246f8 *man/repulsiveForce.Rd
 e9fb999af3d08bb09c7e1119f4b5ff15 *man/vowelSpaceArea.Rd
